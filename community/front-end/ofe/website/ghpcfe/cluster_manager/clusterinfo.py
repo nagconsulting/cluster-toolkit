@@ -226,8 +226,8 @@ class ClusterInfo:
                 regular_image_fam = f"image-{part.image.family}"
                 image_family = imported_image_fam if part.image.source_image_family == "Imported" else regular_image_fam
                 instance_image_yaml = f"""instance_image:
-        family:{image_family}
-        project: {self.cluster.project_id}"""
+            family: {image_family}
+            project: {self.cluster.project_id}"""
             else:
                 instance_image_yaml = ""
 

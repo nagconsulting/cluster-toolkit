@@ -55,6 +55,10 @@ resource "google_filestore_instance" "filestore_instance" {
   name     = var.name != null ? var.name : "${var.deployment_name}-${random_id.resource_name_suffix.hex}"
   location = var.filestore_tier == "ENTERPRISE" ? var.region : var.zone
   tier     = var.filestore_tier
+  protocol = var.protocol
+
+  deletion_protection_enabled = var.deletion_protection.enabled
+  deletion_protection_reason  = var.deletion_protection.reason
 
   file_shares {
     capacity_gb = var.size_gb

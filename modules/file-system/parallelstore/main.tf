@@ -30,14 +30,13 @@ locals {
   client_install_runner = {
     "type"        = "shell"
     "source"      = "${path.module}/scripts/install-daos-client.sh"
-    "args"        = "--access_points=\"${local.access_points}\""
     "destination" = "install_daos_client.sh"
   }
 
   mount_runner = {
     "type"        = "shell"
     "source"      = "${path.module}/scripts/mount-daos.sh"
-    "args"        = "--local_mount=\"${var.local_mount}\" --mount_options=\"${var.mount_options}\""
+    "args"        = "--access_points=\"${local.access_points}\" --local_mount=\"${var.local_mount}\" --mount_options=\"${var.mount_options}\""
     "destination" = "mount_daos.sh"
   }
 }
@@ -47,6 +46,7 @@ resource "random_id" "resource_name_suffix" {
 }
 
 resource "google_parallelstore_instance" "instance" {
+  project      = var.project_id
   instance_id  = local.id
   location     = var.zone
   capacity_gib = var.size_gb

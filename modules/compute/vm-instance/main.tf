@@ -239,7 +239,14 @@ resource "google_compute_instance" "compute_vm" {
     scopes = var.service_account_scopes
   }
 
-  guest_accelerator = local.guest_accelerator
+  dynamic "guest_accelerator" {
+    for_each = local.guest_accelerator
+    content {
+      count = guest_accelerator.value.count
+      type  = guest_accelerator.value.type
+    }
+  }
+
   scheduling {
     on_host_maintenance = local.on_host_maintenance
     automatic_restart   = local.automatic_restart
@@ -251,6 +258,17 @@ resource "google_compute_instance" "compute_vm" {
     for_each = local.set_threads_per_core ? [1] : []
     content {
       threads_per_core = local.threads_per_core # relies on threads_per_core_calc.tf
+    }
+  }
+
+  dynamic "reservation_affinity" {
+    for_each = var.reservation_name == "" ? [] : [1]
+    content {
+      type = "SPECIFIC_RESERVATION"
+      specific_reservation {
+        key    = "compute.googleapis.com/reservation-name"
+        values = [var.reservation_name]
+      }
     }
   }
 

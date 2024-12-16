@@ -88,61 +88,80 @@ def test_dict_to_conf(value: dict, want: str):
         (TstCfg(
             install_dir="ukulele",
         ), 
-         """PrivateData=cloud
-LaunchParameters=enable_nss_slurm,use_interactive_step
+         """LaunchParameters=enable_nss_slurm,use_interactive_step
 SlurmctldParameters=cloud_dns,enable_configless,idle_on_node_suspend
 SchedulerParameters=bf_continue,salloc_wait_nodes,ignore_prefer_validation
-SuspendProgram=ukulele/suspend.py
 ResumeProgram=ukulele/resume.py
 ResumeFailProgram=ukulele/suspend.py
 ResumeRate=0
 ResumeTimeout=300
+SuspendProgram=ukulele/suspend.py
 SuspendRate=0
 SuspendTimeout=300
 TreeWidth=128
-TopologyPlugin=topology/tree"""),
+TopologyPlugin=topology/tree
+TopologyParam=SwitchAsNodeRank"""),
         (TstCfg(
             install_dir="ukulele",
             cloud_parameters={
                 "no_comma_params": True,
+                "private_data": None,
+                "scheduler_parameters": None,
                 "resume_rate": None,
                 "resume_timeout": None,
                 "suspend_rate": None,
                 "suspend_timeout": None,
                 "topology_plugin": None,
+                "topology_param": None,
                 "tree_width": None,
             },
         ),
-         """SuspendProgram=ukulele/suspend.py
+         """SchedulerParameters=bf_continue,salloc_wait_nodes,ignore_prefer_validation
 ResumeProgram=ukulele/resume.py
 ResumeFailProgram=ukulele/suspend.py
 ResumeRate=0
 ResumeTimeout=300
+SuspendProgram=ukulele/suspend.py
 SuspendRate=0
 SuspendTimeout=300
 TreeWidth=128
-TopologyPlugin=topology/tree"""),
+TopologyPlugin=topology/tree
+TopologyParam=SwitchAsNodeRank"""),
         (TstCfg(
             install_dir="ukulele",
             cloud_parameters={
                 "no_comma_params": True,
+                "private_data": [
+                    "events",
+                    "jobs",
+                ],
+                "scheduler_parameters": [
+                    "bf_busy_nodes",
+                    "bf_continue",
+                    "ignore_prefer_validation",
+                    "nohold_on_prolog_fail",
+                ],
                 "resume_rate": 1,
                 "resume_timeout": 2,
                 "suspend_rate": 3,
                 "suspend_timeout": 4,
                 "topology_plugin": "guess",
+                "topology_param": "yellow",
                 "tree_width": 5,
             },
         ),
-         """SuspendProgram=ukulele/suspend.py
+         """PrivateData=events,jobs
+SchedulerParameters=bf_busy_nodes,bf_continue,ignore_prefer_validation,nohold_on_prolog_fail
 ResumeProgram=ukulele/resume.py
 ResumeFailProgram=ukulele/suspend.py
 ResumeRate=1
 ResumeTimeout=2
+SuspendProgram=ukulele/suspend.py
 SuspendRate=3
 SuspendTimeout=4
 TreeWidth=5
-TopologyPlugin=guess"""),
+TopologyPlugin=guess
+TopologyParam=yellow"""),
     ])
 def test_conflines(cfg, want):
     assert conf.conflines(util.Lookup(cfg)) == want

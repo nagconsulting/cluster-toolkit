@@ -4,8 +4,8 @@
 > This solution is built upon "legacy" blueprints using Slurm-GCP v5. The
 > [solution using v6](../README.md) is recommended for all new deployments.
 > The legacy solution is presented for customers with existing deployments. We
-> recommend maintaining existing deployments with v1.37.0 of the Toolkit as this
-> combination is tested nightly.
+> recommend maintaining existing deployments with the version of the Toolkit
+> originally used to deploy.
 
 This document will guide you to successfully provisioning a Slurm cluster with
 a3-highgpu-8g compute nodes running NVIDIA H100 GPUs.
@@ -40,7 +40,7 @@ installing them in a Python virtual environment:
 python3 -m venv toolkit-a3
 source toolkit-a3/bin/activate
 pip3 install -r \
-    https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/5.12.0/scripts/requirements.txt
+    https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/5.12.2/scripts/requirements.txt
 ```
 
 **Always** activate the environment before running any gcluster commands such as

@@ -24,7 +24,7 @@ locals {
 
 module "bucket" {
   source  = "terraform-google-modules/cloud-storage/google"
-  version = "~> 5.0"
+  version = "~> 6.1"
 
   count = var.create_bucket ? 1 : 0
 
@@ -51,7 +51,7 @@ locals {
   viewers = toset(flatten([
     "serviceAccount:${module.slurm_controller_template.service_account.email}",
     formatlist("serviceAccount:%s", [for x in local.compute_sa : x.email]),
-    formatlist("serviceAccount:%s", [for x in local.compute_tpu_sa : x.email]),
+    formatlist("serviceAccount:%s", [for x in local.compute_tpu_sa : x.email if x.email != null]),
     formatlist("serviceAccount:%s", [for x in local.login_sa : x.email]),
   ]))
 }
@@ -122,7 +122,7 @@ locals {
 module "daos_network_storage_scripts" {
   count = length(local.daos_ns) > 0 ? 1 : 0
 
-  source          = "github.com/GoogleCloudPlatform/hpc-toolkit//modules/scripts/startup-script?ref=v1.36.0&depth=1"
+  source          = "../../../../modules/scripts/startup-script"
   labels          = local.labels
   project_id      = var.project_id
   deployment_name = var.deployment_name

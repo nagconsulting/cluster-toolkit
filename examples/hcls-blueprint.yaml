@@ -16,6 +16,10 @@
 
 blueprint_name: hcls-cluster-v6
 
+validators:
+- validator: test_apis_enabled
+  skip: true # skipping this validator, since "service-enablement" will take care of it.
+
 vars:
   project_id:  ## Set GCP Project ID Here ##
   deployment_name: hcls-cluster-v6
@@ -329,11 +333,11 @@ deployment_groups:
       partition_name: gpu
 
   - id: slurm_login
-    source: ./community/modules/scheduler/schedmd-slurm-gcp-v6-login
+    source: community/modules/scheduler/schedmd-slurm-gcp-v6-login
     use: [network]
 
   - id: slurm_controller
-    source: ./community/modules/scheduler/schedmd-slurm-gcp-v6-controller
+    source: community/modules/scheduler/schedmd-slurm-gcp-v6-controller
     use:
     - network
     - compute_partition

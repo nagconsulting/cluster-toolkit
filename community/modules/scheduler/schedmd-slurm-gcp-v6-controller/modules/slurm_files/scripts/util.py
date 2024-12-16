@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Iterable, List, Tuple, Optional
+from typing import Iterable, List, Tuple, Optional, Any, Dict, Sequence
 import argparse
 import base64
-import collections
+from dataclasses import dataclass
+from datetime import timedelta, datetime
 import hashlib
 import inspect
 import json
@@ -34,11 +35,11 @@ import subprocess
 import sys
 import tempfile
 from enum import Enum
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from functools import lru_cache, reduce, wraps
-from itertools import chain, compress, islice
+from itertools import chain, islice
 from pathlib import Path
 from time import sleep, time
 
@@ -78,7 +79,6 @@ if ENV_CONFIG_YAML:
 else:
     CONFIG_FILE = Path(__file__).with_name("config.yaml")
 API_REQ_LIMIT = 2000
-URI_REGEX = r"[a-z]([-a-z0-9]*[a-z0-9])?"
 
 
 def mkdirp(path: Path) -> None:
@@ -267,17 +267,18 @@ def map_with_futures(func, seq):
                 res = e
             yield res
 
+def _get_bucket_and_common_prefix() -> Tuple[str, str]:
+    uri = instance_metadata("attributes/slurm_bucket_path")
+    return parse_bucket_uri(uri)
 
 def blob_get(file):
-    uri = instance_metadata("attributes/slurm_bucket_path")
-    bucket_name, path = parse_bucket_uri(uri)
+    bucket_name, path = _get_bucket_and_common_prefix()
     blob_name = f"{path}/{file}"
     return storage_client().get_bucket(bucket_name).blob(blob_name)
 
 
 def blob_list(prefix="", delimiter=None):
-    uri = instance_metadata("attributes/slurm_bucket_path")
-    bucket_name, path = parse_bucket_uri(uri)
+    bucket_name, path = _get_bucket_and_common_prefix()
     blob_prefix = f"{path}/{prefix}"
     # Note: The call returns a response only when the iterator is consumed.
     blobs = storage_client().list_blobs(
@@ -337,7 +338,7 @@ def install_custom_scripts(check_hash=False):
             chown_slurm(dirs.custom_scripts / par)
         need_update = True
         if check_hash and fullpath.exists():
-            # TODO: MD5 reported by gcloud may differ from the one calculated here (e.g. if blob got gzipped), 
+            # TODO: MD5 reported by gcloud may differ from the one calculated here (e.g. if blob got gzipped),
             # consider using gCRC32C
             need_update = hash_file(fullpath) != blob.md5_hash
         if need_update:
@@ -345,16 +346,6 @@ def install_custom_scripts(check_hash=False):
             with fullpath.open("wb") as f:
                 blob.download_to_file(f)
             chown_slurm(fullpath, mode=0o755)
-
-
-def reservation_resource_policies(reservation):
-    """
-    Inspects reservation object, returns list of resource policies names.
-    Converts policy URLs to names, e.g.:
-    projects/111111/regions/us-central1/resourcePolicies/zebra -> zebra
-    """
-    return [u.split("/")[-1] for u in reservation.get("resourcePolicies", {}).values()]
-
 
 def compute_service(version="beta"):
     """Make thread-safe compute service handle
@@ -381,6 +372,7 @@ def compute_service(version="beta"):
         requestBuilder=build_request,
         credentials=credentials,
         discoveryServiceUrl=disc_url,
+        cache_discovery=False, # See https://github.com/googleapis/google-api-python-client/issues/299
     )
 
 def storage_client() -> storage.Client:
@@ -394,9 +386,14 @@ def storage_client() -> storage.Client:
     return storage.Client(client_options=ClientOptions(**co))
 
 
-def load_config_data(config):
-    """load dict-like data into a config object"""
-    cfg = NSDict(config)
+class DeffetiveStoredConfigError(Exception):
+    """
+    Raised when config can not be loaded and assembled from bucket
+    """
+    pass
+
+
+def _fill_cfg_defaults(cfg: NSDict) -> NSDict:
     if not cfg.slurm_log_dir:
         cfg.slurm_log_dir = dirs.log
     if not cfg.slurm_bin_dir:
@@ -405,8 +402,7 @@ def load_config_data(config):
         cfg.slurm_control_host = f"{cfg.slurm_cluster_name}-controller"
     if not cfg.slurm_control_host_port:
         cfg.slurm_control_host_port = "6820-6830"
-    if not cfg.munge_mount:
-        # NOTE: should only happen with cloud controller
+    if not cfg.munge_mount: # NOTE: should only happen with cloud controller
         cfg.munge_mount = NSDict(
             {
                 "server_ip": cfg.slurm_control_addr or cfg.slurm_control_host,
@@ -415,18 +411,11 @@ def load_config_data(config):
                 "mount_options": "defaults,hard,intr,_netdev",
             }
         )
-    return cfg
-
-
-def new_config(config):
-    """initialize a new config object
-    necessary defaults are handled here
-    """
-    cfg = load_config_data(config)
 
     network_storage_iter = filter(
         None,
         (
+            cfg.munge_mount,
             *cfg.network_storage,
             *cfg.login_network_storage,
             *chain.from_iterable(ns.network_storage for ns in cfg.nodeset.values()),
@@ -441,35 +430,107 @@ def new_config(config):
             netstore.server_ip = cfg.slurm_control_host
     return cfg
 
+def _list_config_blobs() -> Tuple[Any, str]:
+    _, common_prefix = _get_bucket_and_common_prefix()
+    res = { # TODO: use a dataclass once we move to python 3.7
+        "core": None,
+        "partition": [],
+        "nodeset": [],
+        "nodeset_dyn": [],
+        "nodeset_tpu": [],
+    }
+    hash = hashlib.md5()
+    blobs = list(blob_list(prefix=""))
+    # sort blobs so hash is consistent
+    for blob in sorted(blobs, key=lambda b: b.name):
+        if blob.name == f"{common_prefix}/config.yaml":
+            res["core"] = blob
+            hash.update(blob.md5_hash.encode("utf-8"))
+        for key in ("partition", "nodeset", "nodeset_dyn", "nodeset_tpu"):
+            if blob.name.startswith(f"{common_prefix}/{key}_configs/"):
+                res[key].append(blob)
+                hash.update(blob.md5_hash.encode("utf-8"))
 
-def fetch_config_yaml():
-    """Fetch config.yaml from bucket"""
-    config_yaml = blob_get("config.yaml").download_as_text()
-    return new_config(yaml.safe_load(config_yaml))
+    if res["core"] is None:
+        raise DeffetiveStoredConfigError("config.yaml not found in bucket")
+    return res, hash.hexdigest()
 
 
-def fetch_config_yaml_md5():
-    """Fetch config.yaml blob md5 from bucket"""
-    blob = blob_get("config.yaml")
-    blob.reload()  # Populate blob with metadata
-    hash_str = str(blob.md5_hash).encode(encoding="utf-8")
-    return hashlib.md5(hash_str)
+def _fetch_config(old_hash: Optional[str]) -> Optional[Tuple[NSDict, str]]:
+    """Fetch config from bucket, returns None if no changes are detected."""
+    blobs, hash = _list_config_blobs()
+    if old_hash == hash:
+        return None
 
+    def _download(bs) -> List[Any]:
+        return [yaml.safe_load(b.download_as_text()) for b in bs]
 
-def load_config_file(path):
-    """load config from file"""
-    content = None
-    try:
-        content = yaml.safe_load(Path(path).read_text())
-    except FileNotFoundError:
-        log.warning(f"config file not found: {path}")
-        return NSDict()
-    return load_config_data(content)
+    return _assemble_config(
+        core=_download([blobs["core"]])[0],
+        partitions=_download(blobs["partition"]),
+        nodesets=_download(blobs["nodeset"]),
+        nodesets_dyn=_download(blobs["nodeset_dyn"]),
+        nodesets_tpu=_download(blobs["nodeset_tpu"]),
+    ), hash
 
+def _assemble_config(
+        core: Any,
+        partitions: List[Any],
+        nodesets: List[Any],
+        nodesets_dyn: List[Any],
+        nodesets_tpu: List[Any],
+    ) -> NSDict:
+    cfg = NSDict(core)
 
-def save_config(cfg, path):
-    """save given config to file at path"""
-    Path(path).write_text(yaml.dump(cfg, Dumper=Dumper))
+    # add partition configs
+    for p_yaml in partitions:
+        p_cfg = NSDict(p_yaml)
+        assert p_cfg.get("partition_name"), "partition_name is required"
+        p_name = p_cfg.partition_name
+        assert p_name not in cfg.partitions, f"partition {p_name} already defined"
+        cfg.partitions[p_name] = p_cfg
+
+    # add nodeset configs
+    ns_names = set()
+    def _add_nodesets(yamls: List[Any], target: dict):
+        for ns_yaml in yamls:
+            ns_cfg = NSDict(ns_yaml)
+            assert ns_cfg.get("nodeset_name"), "nodeset_name is required"
+            ns_name = ns_cfg.nodeset_name
+            assert ns_name not in ns_names, f"nodeset {ns_name} already defined"
+            target[ns_name] = ns_cfg
+            ns_names.add(ns_name)
+
+    _add_nodesets(nodesets, cfg.nodeset)
+    _add_nodesets(nodesets_dyn, cfg.nodeset_dyn)
+    _add_nodesets(nodesets_tpu, cfg.nodeset_tpu)
+
+    # validate that configs for all referenced nodesets are present
+    for p in cfg.partitions.values():
+        for ns_name in chain(p.partition_nodeset, p.partition_nodeset_dyn, p.partition_nodeset_tpu):
+            if ns_name not in ns_names:
+                raise DeffetiveStoredConfigError(f"nodeset {ns_name} not defined in config")
+
+    return _fill_cfg_defaults(cfg)
+
+def fetch_config() -> Tuple[bool, NSDict]:
+    """
+    Fetches config from bucket and saves it locally
+    Returns True if new (updated) config was fetched
+    """
+    hash_file = Path("/slurm/scripts/.config.hash")
+    old_hash = hash_file.read_text() if hash_file.exists() else None
+
+    cfg_and_hash = _fetch_config(old_hash=old_hash)
+    if not cfg_and_hash:
+        return False, _load_config()
+
+    cfg, hash = cfg_and_hash
+    hash_file.write_text(hash)
+    chown_slurm(hash_file)
+    CONFIG_FILE.write_text(yaml.dump(cfg, Dumper=Dumper))
+    chown_slurm(CONFIG_FILE)
+    return True, cfg
 
 def owned_file_handler(filename):
     """create file handler"""
@@ -481,7 +542,8 @@ def get_log_path() -> Path:
     Returns path to log file for the current script.
     e.g. resume.py -> /var/log/slurm/resume.log
     """
-    log_dir = Path(lookup().cfg.slurm_log_dir or ".")
+    cfg_log_dir = lookup().cfg.slurm_log_dir
+    log_dir = Path(cfg_log_dir) if cfg_log_dir else dirs.log
     return (log_dir / Path(sys.argv[0]).name).with_suffix(".log")
 
 def init_log_and_parse(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -501,13 +563,11 @@ def init_log_and_parse(parser: argparse.ArgumentParser) -> argparse.Namespace:
         help="Enable detailed api request output",
     )
     args = parser.parse_args()
-    
     loglevel = args.loglevel
     if lookup().cfg.enable_debug_logging:
         loglevel = logging.DEBUG
     if args.trace_api:
         lookup().cfg.extra_logging_flags["trace_api"] = True
-
     # Configure root logger
     logging.config.dictConfig({
         "version": 1,
@@ -549,7 +609,6 @@ def log_api_request(request):
     """log.trace info about a compute API request"""
     if not lookup().cfg.extra_logging_flags.get("trace_api"):
         return
-    
     # output the whole request object as pretty yaml
     # the body is nested json, so load it as well
     rep = json.loads(request.to_json())
@@ -686,8 +745,7 @@ def chunked(iterable, n=API_REQ_LIMIT):
             return
         yield chunk
 
-
-def groupby_unsorted(seq, key):
+def groupby_unsorted(seq: Sequence[Any], key):
     indices = defaultdict(list)
     for i, el in enumerate(seq):
         indices[key(el)].append(i)
@@ -818,25 +876,13 @@ def natural_sort(text):
 
     return [atoi(w) for w in re.split(r"(\d+)", text)]
 
-# TODO: replace with to_hostlist_fast
-def to_hostlist(nodenames) -> str:
-    """make hostlist from list of node names"""
-    # use tmp file because list could be large
-    tmp_file = tempfile.NamedTemporaryFile(mode="w+t", delete=False)
-    tmp_file.writelines("\n".join(sorted(nodenames, key=natural_sort)))
-    tmp_file.close()
 
-    hostlist = run(f"{lookup().scontrol} show hostlist {tmp_file.name}").stdout.rstrip()
-    os.remove(tmp_file.name)
-    return hostlist
-
-
-def to_hostlist_fast(names: Iterable[str]) -> str:
+def to_hostlist(names: Iterable[str]) -> str:
     """
-    Fast implementation of to_hostlist that doesn't invoke `scontrol`
+    Fast implementation of `hostlist` that doesn't invoke `scontrol`
     IMPORTANT:
     * Acts as `scontrol show hostlistsorted`, i.e. original order is not preserved
-    * Achieves worse compression than `to_hostlist` for some cases
+    * Achieves worse compression than `scontrol show hostlist` for some cases
     """
     pref = defaultdict(list)
     tokenizer = re.compile(r"^(.*?)(\d*)$")
@@ -888,11 +934,7 @@ def to_hostlist_fast(names: Iterable[str]) -> str:
             res.append(f"{p}[{','.join(cs)}]")
     return ",".join(res)
 
-
-def part_is_tpu(part):
-    """check if partition with name part contains a nodeset of type tpu"""
-    return len(lookup().cfg.partitions[part].partition_nodeset_tpu) > 0
-
+@lru_cache(maxsize=None)
 def to_hostnames(nodelist: str) -> List[str]:
     """make list of hostnames from hostlist expression"""
     if not nodelist:
@@ -1076,55 +1118,48 @@ def get_insert_operations(group_ids):
     return get_filtered_operations(" AND ".join(f"({f})" for f in filters if f))
 
 
-def machine_type_sockets(template):
-    pattern = re.compile("^(?P<family>[^-]+)")
-    m = pattern.match(template.machineType)
-    if not m:
-        raise Exception(f"template {template} does not match expected regex")
-    family = m.group("family")
+def machine_type_family(mt: str) -> str:
+    """get machine type family from machine type"""
+    # TODO: doesn't work with N1 custom machine types
+    # See https://cloud.google.com/compute/docs/instances/creating-instance-with-custom-machine-type#create
+    return mt.split("-")[0]
+
+
+def machine_type_sockets(template) -> int:
     guestCpus: int = int(template.machine_info.guestCpus)
-    socket_count = dict.get(
-        {
-            "h3": 2,
-            "c2d": 2 if guestCpus > 56 else 1,
-            "a3": 2,
-        },
-        family,
+    return {
+        "h3": 2,
+        "c2d": 2 if guestCpus > 56 else 1,
+        "a3": 2,
+        "c2": 2 if guestCpus > 30 else 1,
+        "c3": 2 if guestCpus > 88 else 1,
+        "c3d": 2 if guestCpus > 180 else 1,
+        "c4": 2 if guestCpus > 96 else 1,
+    }.get(
+        machine_type_family(template.machineType),
         1,  # assume 1 socket for all other families
     )
-    return socket_count
 
 
-def isSmt(template):
-    machineType: str = template.machineType
-    guestCpus: int = int(template.machine_info.guestCpus)
-
-    pattern = re.compile("^(?P<family>[^-]+)")
-    matches = pattern.match(machineType)
-    machineTypeFamily: str = matches["family"]
-
+def isSmt(template) -> bool:
     # https://cloud.google.com/compute/docs/cpu-platforms
-    noSmtFamily = [
+    noSmtFamily = (
         "t2a",
         "t2d",
         "h3",
-    ]
-    if machineTypeFamily in noSmtFamily:
+        "c4a",
+    )
+    if machine_type_family(template.machineType) in noSmtFamily:
         return False
-    elif guestCpus == 1:
+    if template.machine_info.guestCpus == 1:
         return False
     return True
 
 
-def getThreadsPerCore(template):
-    threadsPerCore: int = template.advancedMachineFeatures.threadsPerCore
-
+def getThreadsPerCore(template) -> int:
     if not isSmt(template):
         return 1
-    elif threadsPerCore:
-        return threadsPerCore
-    else:
-        return 2
+    return template.advancedMachineFeatures.threadsPerCore or 2
 
 
 @retry(
@@ -1401,6 +1436,43 @@ class TPU:
             return True
 
 
+@dataclass(frozen=True)
+class ReservationDetails:
+    project: str
+    zone: str
+    name: str
+    policies: List[str] # names (not URLs) of resource policies
+    bulk_insert_name: str # name in format suitable for bulk insert (currently identical to user supplied name in long format)
+    deployment_type: Optional[str]
+
+    @property
+    def dense(self) -> bool:
+        return self.deployment_type == "DENSE"
+
+@dataclass(frozen=True)
+class FutureReservation:
+    project: str
+    zone: str
+    name: str
+    specific: bool
+    start_time: datetime
+    end_time: datetime
+    active_reservation: Optional[ReservationDetails]
+
+
+@dataclass
+class Job:
+    id: int
+    name: Optional[str] = None
+    required_nodes: Optional[str] = None
+    job_state: Optional[str] = None
+    duration: Optional[timedelta] = None
+
+@dataclass(frozen=True)
+class NodeState:
+    base: str
+    flags: frozenset
+
 class Lookup:
     """Wrapper class for cached data access"""
 
@@ -1494,29 +1566,46 @@ class Lookup:
 
     def node_prefix(self, node_name=None):
         return self._node_desc(node_name)["prefix"]
+    
+    def node_index(self, node: str) -> int:
+        """ node_index("cluster-nodeset-45") == 45 """
+        suff = self._node_desc(node)["suffix"]
+        
+        if suff is None:
+            raise ValueError(f"Node {node} name does not end with numeric index")
+        return int(suff)
 
     def node_nodeset_name(self, node_name=None):
         return self._node_desc(node_name)["nodeset"]
 
     def node_nodeset(self, node_name=None):
         nodeset_name = self.node_nodeset_name(node_name)
-        ns = self.cfg.nodeset.get(nodeset_name)
-        if ns:
-            return ns
-        return self.cfg.nodeset_tpu.get(nodeset_name)
+        if nodeset_name in self.cfg.nodeset_tpu:
+            return self.cfg.nodeset_tpu[nodeset_name]
+
+        return self.cfg.nodeset[nodeset_name]
+
+    def partition_is_tpu(self, part: str) -> bool:
+        """check if partition with name part contains a nodeset of type tpu"""
+        return len(self.cfg.partitions[part].partition_nodeset_tpu) > 0
+
 
     def node_is_tpu(self, node_name=None):
         nodeset_name = self.node_nodeset_name(node_name)
         return self.cfg.nodeset_tpu.get(nodeset_name) is not None
+    
+    def node_is_fr(self, node_name:str) -> bool:
+        return bool(self.node_nodeset(node_name).future_reservation)
+
+    def is_dormant_fr_node(self, node_name:str) -> bool:
+        fr = self.future_reservation(self.node_nodeset(node_name))
+        if not fr:
+            return False
+        return fr.active_reservation is None
 
     def node_is_dyn(self, node_name=None) -> bool:
         nodeset = self.node_nodeset_name(node_name)
         return self.cfg.nodeset_dyn.get(nodeset) is not None
-
-    def chunk_tpu_nodes(self, tpu_nodes):
-        model = tpu_nodes[0]
-        tpu = TPU(self.node_nodeset(model))
-        return chunked(tpu_nodes, n=tpu.vmcount)
 
     def node_template(self, node_name=None):
         return self.node_nodeset(node_name).instance_template
@@ -1576,15 +1665,14 @@ class Lookup:
 
     @lru_cache(maxsize=None)
     def slurm_nodes(self):
-        StateTuple = namedtuple("StateTuple", "base,flags")
 
         def make_node_tuple(node_line):
-            """turn node,state line to (node, StateTuple(state))"""
+            """turn node,state line to (node, NodeState(state))"""
             # state flags include: CLOUD, COMPLETING, DRAIN, FAIL, POWERED_DOWN,
             #   POWERING_DOWN
             node, fullstate = node_line.split(",")
             state = fullstate.split("+")
-            state_tuple = StateTuple(state[0], set(state[1:]))
+            state_tuple = NodeState(base=state[0], flags=frozenset(state[1:]))
             return (node, state_tuple)
 
         cmd = (
@@ -1600,13 +1688,42 @@ class Lookup:
         }
         return nodes
 
-    def slurm_node(self, nodename):
-        return self.slurm_nodes().get(nodename)
+    def node_state(self, nodename: str) -> Optional[NodeState]:
+        state = self.slurm_nodes().get(nodename)
+        if state is not None:
+            return state
+        
+        # state is None => Slurm doesn't know this node,
+        # there are two reasons:
+        # * happy: 
+        #   * node belongs to removed nodeset
+        #   * node belongs to downsized portion of nodeset
+        #   * dynamic node that didn't register itself
+        # * unhappy:
+        #   * there is a drift in Slurm and SlurmGCP configurations
+        #   * `slurm_nodes` function failed to handle `scontrol show nodes`,
+        #      TODO: make `slurm_nodes` robust by using `scontrol show nodes --json`
+        # In either of "unhappy" cases it's too dangerous to proceed - abort slurmsync.
+        try:
+            ns = self.node_nodeset(nodename)
+        except:
+            log.info(f"Unknown node {nodename}, belongs to unknown nodeset")
+            return None # Can't find nodeset, may be belongs to removed nodeset
+        
+        if self.node_is_dyn(nodename):
+            log.info(f"Unknown node {nodename}, belongs to dynamic nodeset")
+            return None # we can't make any judjment for dynamic nodes
+        
+        cnt = sum(self.static_dynamic_sizes(ns))
+        if self.node_index(nodename) >= cnt:
+            log.info(f"Unknown node {nodename}, out of nodeset size boundaries ({cnt})")
+            return None # node belongs to downsized nodeset
+        
+        raise RuntimeError(f"Slurm does not recognize node {nodename}, potential misconfiguration.")
+
 
     @lru_cache(maxsize=1)
-    def instances(self, project=None, slurm_cluster_name=None):
-        slurm_cluster_name = slurm_cluster_name or self.cfg.slurm_cluster_name
-        project = project or self.project
+    def instances(self) -> Dict[str, object]:
         instance_information_fields = [
             "advancedMachineFeatures",
             "cpuPlatform",
@@ -1644,16 +1761,22 @@ class Lookup:
         if lookup().cfg.enable_slurm_gcp_plugins:
             slurm_gcp_plugins.register_instance_information_fields(
                 lkp=lookup(),
-                project=project,
-                slurm_cluster_name=slurm_cluster_name,
+                project=self.project,
+                slurm_cluster_name=self.cfg.slurm_cluster_name,
                 instance_information_fields=instance_information_fields,
             )
+
+        # TODO: Merge this with all fields when upcoming maintenance is
+        # supported in beta.
+        if endpoint_version(ApiEndpoint.COMPUTE) == 'alpha':
+          instance_information_fields.append("upcomingMaintenance")
+
         instance_information_fields = sorted(set(instance_information_fields))
         instance_fields = ",".join(instance_information_fields)
         fields = f"items.zones.instances({instance_fields}),nextPageToken"
-        flt = f"labels.slurm_cluster_name={slurm_cluster_name} AND name:{slurm_cluster_name}-*"
+        flt = f"labels.slurm_cluster_name={self.cfg.slurm_cluster_name} AND name:{self.cfg.slurm_cluster_name}-*"
         act = self.compute.instances()
-        op = act.aggregatedList(project=project, fields=fields, filter=flt)
+        op = act.aggregatedList(project=self.project, fields=fields, filter=flt)
 
         def properties(inst):
             """change instance properties to a preferred format"""
@@ -1675,7 +1798,7 @@ class Lookup:
             instance_iter = (
                 (inst["name"], properties(inst))
                 for inst in chain.from_iterable(
-                    m["instances"] for m in result.get("items", {}).values()
+                    zone.get("instances", []) for zone in result.get("items", {}).values()
                 )
             )
             instances.update(
@@ -1684,43 +1807,94 @@ class Lookup:
             op = act.aggregatedList_next(op, result)
         return instances
 
-    def instance(self, instance_name, project=None, slurm_cluster_name=None):
-        instances = self.instances(
-            project=project, slurm_cluster_name=slurm_cluster_name
-        )
-        return instances.get(instance_name)
+    def instance(self, instance_name: str) -> Optional[object]:
+        return self.instances().get(instance_name)
 
     @lru_cache()
-    def reservation(self, name: str, zone: str) -> object:
+    def _get_reservation(self, project: str, zone: str, name: str) -> object:
         """See https://cloud.google.com/compute/docs/reference/rest/v1/reservations"""
-        try:
-            _, project, _, short_name = name.split("/")
-        except ValueError:
+        return self.compute.reservations().get(
+            project=project, zone=zone, reservation=name).execute()
+    
+    @lru_cache()
+    def _get_future_reservation(self, project:str, zone:str, name: str) -> object:
+        """See https://cloud.google.com/compute/docs/reference/rest/v1/futureReservations"""
+        return self.compute.futureReservations().get(project=project, zone=zone, futureReservation=name).execute()
+
+    def get_reservation_details(self, project:str, zone:str, name:str, bulk_insert_name:str) -> ReservationDetails:
+        reservation = self._get_reservation(project, zone, name)
+    
+        # Converts policy URLs to names, e.g.:
+        # projects/111111/regions/us-central1/resourcePolicies/zebra -> zebra
+        policies = [u.split("/")[-1] for u in reservation.get("resourcePolicies", {}).values()]
+
+        return ReservationDetails(
+            project=project,
+            zone=zone,
+            name=name,
+            policies=policies,
+            deployment_type=reservation.get("deploymentType"),
+            bulk_insert_name=bulk_insert_name)
+    
+    def nodeset_reservation(self, nodeset: object) -> Optional[ReservationDetails]:
+        if not nodeset.reservation_name:
+            return None
+
+        zones = list(nodeset.zone_policy_allow or [])
+        assert len(zones) == 1, "Only single zone is supported if using a reservation"
+        zone = zones[0]
+
+        regex = re.compile(r'^projects/(?P<project>[^/]+)/reservations/(?P<reservation>[^/]+)(/.*)?$')
+        if not (match := regex.match(nodeset.reservation_name)):
             raise ValueError(
-                f"Invalid reservation name: '{name}', expected format is 'projects/PROJECT/reservations/NAME'"
+                f"Invalid reservation name: '{nodeset.reservation_name}', expected format is 'projects/PROJECT/reservations/NAME'"
             )
 
-        return (
-            self.compute.reservations()
-            .get(project=project, zone=zone, reservation=short_name)
-            .execute()
+        project, name = match.group("project", "reservation")
+        return self.get_reservation_details(project, zone, name, nodeset.reservation_name)
+    
+    def future_reservation(self, nodeset:object) -> Optional[FutureReservation]:
+        if not nodeset.future_reservation:
+            return None
+
+        active_reservation = None
+        match = re.search(r'^projects/(?P<project>[^/]+)/zones/(?P<zone>[^/]+)/futureReservations/(?P<name>[^/]+)(/.*)?$', nodeset.future_reservation)
+        project, zone, name = match.group("project","zone","name")
+        fr = self._get_future_reservation(project,zone,name)
+
+        # TODO: Remove this "hack" of trimming the Z from timestamps once we move to Python 3.11 (context: https://discuss.python.org/t/parse-z-timezone-suffix-in-datetime/2220/30)
+        start_time = datetime.fromisoformat(fr["timeWindow"]["startTime"][:-1])
+        end_time = datetime.fromisoformat(fr["timeWindow"]["endTime"][:-1])
+
+        if "autoCreatedReservations" in fr["status"] and (fr_res:=fr["status"]["autoCreatedReservations"][0]):
+            if (start_time<=datetime.utcnow()<=end_time):
+                match = re.search(r'projects/(?P<project>[^/]+)/zones/(?P<zone>[^/]+)/reservations/(?P<name>[^/]+)(/.*)?$',fr_res)
+                res_name = match.group("name")
+                bulk_insert_name = f"projects/{project}/reservations/{res_name}"
+                active_reservation = self.get_reservation_details(project, zone, res_name, bulk_insert_name)
+
+        return FutureReservation(
+            project=project,
+            zone=zone,
+            name=name,
+            specific=fr["specificReservationRequired"],
+            start_time=start_time,
+            end_time=end_time,
+            active_reservation=active_reservation
         )
 
     @lru_cache(maxsize=1)
-    def machine_types(self, project=None):
-        project = project or self.project
+    def machine_types(self):
         field_names = "name,zone,guestCpus,memoryMb,accelerators"
         fields = f"items.zones.machineTypes({field_names}),nextPageToken"
 
         machines = defaultdict(dict)
         act = self.compute.machineTypes()
-        op = act.aggregatedList(project=project, fields=fields)
+        op = act.aggregatedList(project=self.project, fields=fields)
         while op is not None:
             result = ensure_execute(op)
             machine_iter = chain.from_iterable(
-                m["machineTypes"]
-                for m in result["items"].values()
-                if "machineTypes" in m
+                scope.get("machineTypes", []) for scope in result["items"].values()
             )
             for machine in machine_iter:
                 name = machine["name"]
@@ -1730,20 +1904,13 @@ class Lookup:
             op = act.aggregatedList_next(op, result)
         return machines
 
-    def machine_type(self, machine_type, project=None, zone=None):
+    def machine_type(self, machine_type: str):
         """ """
         custom_patt = re.compile(
             r"((?P<family>\w+)-)?custom-(?P<cpus>\d+)-(?P<mem>\d+)"
         )
         custom_match = custom_patt.match(machine_type)
-        if zone:
-            project = project or self.project
-            machine_info = ensure_execute(
-                self.compute.machineTypes().get(
-                    project=project, zone=zone, machineType=machine_type
-                )
-            )
-        elif custom_match is not None:
+        if custom_match is not None:
             groups = custom_match.groupdict()
             cpus, mem = (groups[k] for k in ["cpus", "mem"])
             machine_info = {
@@ -1751,18 +1918,20 @@ class Lookup:
                 "memoryMb": int(mem),
             }
         else:
-            machines = self.machine_types(project=project)
-            machine_info = next(iter(machines[machine_type].values()), None)
-            if machine_info is None:
+            machines = self.machine_types()
+            if machine_type not in machines:
                 raise Exception(f"machine type {machine_type} not found")
+            per_zone = machines[machine_type]
+            assert per_zone
+            machine_info = next(iter(per_zone.values())) # pick the first/any zone
         return NSDict(machine_info)
 
-    def template_machine_conf(self, template_link, project=None, zone=None):
+    def template_machine_conf(self, template_link):
         template = self.template_info(template_link)
         if not template.machineType:
             temp_name = trim_self_link(template_link)
             raise Exception(f"instance template {temp_name} has no machine type")
-        template.machine_info = self.machine_type(template.machineType, zone=zone)
+        template.machine_info = self.machine_type(template.machineType)
         machine = template.machine_info
 
         machine_conf = NSDict()
@@ -1808,8 +1977,7 @@ class Lookup:
             cache.close()
 
     @lru_cache(maxsize=None)
-    def template_info(self, template_link, project=None):
-        project = project or self.project
+    def template_info(self, template_link):
         template_name = trim_self_link(template_link)
         # split read and write access to minimize write-lock. This might be a
         # bit slower? TODO measure
@@ -1820,7 +1988,7 @@ class Lookup:
 
         template = ensure_execute(
             self.compute.instanceTemplates().get(
-                project=project, instanceTemplate=template_name
+                project=self.project, instanceTemplate=template_name
             )
         ).get("properties")
         template = NSDict(template)
@@ -1831,7 +1999,7 @@ class Lookup:
         # del template.metadata
 
         # translate gpus into an easier-to-read format
-        machine_info = self.machine_type(template.machineType, project=project)
+        machine_info = self.machine_type(template.machineType)
         if machine_info.accelerators:
             template.gpu_type = machine_info.accelerators[0].guestAcceleratorType
             template.gpu_count = machine_info.accelerators[0].guestAcceleratorCount
@@ -1850,12 +2018,55 @@ class Lookup:
 
         return template
 
-    def nodeset_map(self, hostnames: list):
-        """Convert a list of nodes into a map of nodeset_name to hostnames"""
-        nodeset_map = collections.defaultdict(list)
-        for node in hostnames:
-            nodeset_map[self.node_nodeset_name(node)].append(node)
-        return nodeset_map
+
+    def _parse_job_info(self, job_info: str) -> Job:
+        """Extract job details"""
+        if match:= re.search(r"JobId=(\d+)", job_info):
+            job_id = int(match.group(1))
+        else:
+            raise ValueError(f"Job ID not found in the job info: {job_info}")
+
+        if match:= re.search(r"TimeLimit=(?:(\d+)-)?(\d{2}):(\d{2}):(\d{2})", job_info):
+          days, hours, minutes, seconds = match.groups()
+          duration = timedelta(
+              days=int(days) if days else 0,
+              hours=int(hours),
+              minutes=int(minutes),
+              seconds=int(seconds)
+          )
+        else:
+            duration = None
+
+        if match := re.search(r"JobName=([^\n]+)", job_info):
+            name = match.group(1)
+        else:
+            name = None
+
+        if match := re.search(r"JobState=(\w+)", job_info):
+            job_state = match.group(1)
+        else:
+            job_state = None
+
+        if match := re.search(r"ReqNodeList=([^ ]+)", job_info):
+            required_nodes = match.group(1)
+        else:
+            required_nodes = None
+
+        return Job(id=job_id, duration=duration, name=name, job_state=job_state, required_nodes=required_nodes)
+
+    @lru_cache
+    def get_jobs(self) -> List[Job]:
+        res = run(f"{self.scontrol} show jobs", timeout=30)
+
+        return [self._parse_job_info(job) for job in res.stdout.split("\n\n")[:-1]]
+
+    @lru_cache
+    def job(self, job_id: int) -> Optional[Job]:
+        job_info = run(f"{self.scontrol} show jobid {job_id}", check=False).stdout.rstrip()
+        if not job_info:
+            return None
+
+        return self._parse_job_info(job_info=job_info)
 
     @property
     def etc_dir(self) -> Path:
@@ -1863,20 +2074,24 @@ class Lookup:
 
 _lkp: Optional[Lookup] = None
 
+def _load_config() -> NSDict:
+    return NSDict(yaml.safe_load(CONFIG_FILE.read_text()))
+
 def lookup() -> Lookup:
     global _lkp
     if _lkp is None:
-        cfg = load_config_file(CONFIG_FILE)
-        if not cfg:
-            try:
-                cfg = fetch_config_yaml()
-            except Exception as e:
-                log.warning(f"config not found in bucket: {e}")
-            if cfg:
-                save_config(cfg, CONFIG_FILE)
+        try:
+            cfg =  _load_config()
+        except FileNotFoundError:
+            log.error(f"config file not found: {CONFIG_FILE}")
+            cfg = NSDict() # TODO: fail here, once all code paths are covered (mainly init_logging)
         _lkp = Lookup(cfg)
     return _lkp
 
+def update_config(cfg: NSDict) -> None:
+    global _lkp
+    _lkp = Lookup(cfg)
+
 def scontrol_reconfigure(lkp: Lookup) -> None:
     log.info("Running scontrol reconfigure")
-    run(f"{lkp.scontrol} reconfigure", timeout=30)
+    run(f"{lkp.scontrol} reconfigure")

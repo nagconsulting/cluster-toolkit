@@ -29,11 +29,35 @@ locals {
     security_group = var.authenticator_security_group
   }]
 
-  sa_email = var.service_account_email != null ? var.service_account_email : data.google_compute_default_service_account.default_sa.email
+  default_sa_email = "${data.google_project.project.number}-compute@developer.gserviceaccount.com"
+  sa_email         = coalesce(var.service_account_email, local.default_sa_email)
+
+  # additional VPCs enable multi networking 
+  derived_enable_multi_networking = coalesce(var.enable_multi_networking, length(var.additional_networks) > 0)
+
+  # multi networking needs enabled Dataplane v2
+  derived_enable_dataplane_v2 = coalesce(var.enable_dataplane_v2, local.derived_enable_multi_networking)
+
+  default_monitoring_component = [
+    "SYSTEM_COMPONENTS",
+    "POD",
+    "DAEMONSET",
+    "DEPLOYMENT",
+    "STATEFULSET",
+    "STORAGE",
+    "HPA",
+    "CADVISOR",
+    "KUBELET"
+  ]
+
+  default_logging_component = [
+    "SYSTEM_COMPONENTS",
+    "WORKLOADS"
+  ]
 }
 
-data "google_compute_default_service_account" "default_sa" {
-  project = var.project_id
+data "google_project" "project" {
+  project_id = var.project_id
 }
 
 resource "google_container_cluster" "gke_cluster" {
@@ -41,15 +65,14 @@ resource "google_container_cluster" "gke_cluster" {
 
   project         = var.project_id
   name            = local.name
-  location        = var.region
+  location        = var.cluster_availability_type == "ZONAL" ? var.zone : var.region
   resource_labels = local.labels
-
+  networking_mode = var.networking_mode
   # decouple node pool lifecycle from cluster life cycle
   remove_default_node_pool = true
   initial_node_count       = 1 # must be set when remove_default_node_pool is set
 
-  # Sets default to false so terraform deletion is not prevented
-  deletion_protection = false
+  deletion_protection = var.deletion_protection
 
   network    = var.network_id
   subnetwork = var.subnetwork_self_link
@@ -68,7 +91,7 @@ resource "google_container_cluster" "gke_cluster" {
   }
 
   private_ipv6_google_access = var.enable_private_ipv6_google_access ? "PRIVATE_IPV6_GOOGLE_ACCESS_TO_GOOGLE" : null
-
+  default_max_pods_per_node  = var.default_max_pods_per_node
   master_auth {
     client_certificate_config {
       issue_client_certificate = false
@@ -85,7 +108,9 @@ resource "google_container_cluster" "gke_cluster" {
     autoscaling_profile = var.autoscaling_profile
   }
 
-  datapath_provider = var.enable_dataplane_v2 ? "ADVANCED_DATAPATH" : "LEGACY_DATAPATH"
+  datapath_provider = local.derived_enable_dataplane_v2 ? "ADVANCED_DATAPATH" : "LEGACY_DATAPATH"
+
+  enable_multi_networking = local.derived_enable_multi_networking
 
   network_policy {
     # Enabling NetworkPolicy for clusters with DatapathProvider=ADVANCED_DATAPATH
@@ -156,6 +181,12 @@ resource "google_container_cluster" "gke_cluster" {
     gce_persistent_disk_csi_driver_config {
       enabled = var.enable_persistent_disk_csi
     }
+    dns_cache_config {
+      enabled = var.enable_node_local_dns_cache
+    }
+    parallelstore_csi_driver_config {
+      enabled = var.enable_parallelstore_csi
+    }
   }
 
   timeouts {
@@ -168,10 +199,30 @@ resource "google_container_cluster" "gke_cluster" {
     ignore_changes = [
       node_config
     ]
+    precondition {
+      condition     = var.default_max_pods_per_node == null || var.networking_mode == "VPC_NATIVE"
+      error_message = "default_max_pods_per_node does not work on `routes-based` clusters, that don't have IP Aliasing enabled."
+    }
+    precondition {
+      condition     = coalesce(var.enable_dataplane_v2, true) || !local.derived_enable_multi_networking
+      error_message = "'enable_dataplane_v2' cannot be false when enabling multi networking."
+    }
+    precondition {
+      condition     = coalesce(var.enable_multi_networking, true) || length(var.additional_networks) == 0
+      error_message = "'enable_multi_networking' cannot be false when using multivpc module, which passes additional_networks."
+    }
   }
 
-  logging_service    = "logging.googleapis.com/kubernetes"
-  monitoring_service = "monitoring.googleapis.com/kubernetes"
+  monitoring_config {
+    enable_components = var.enable_dcgm_monitoring ? concat(local.default_monitoring_component, ["DCGM"]) : local.default_monitoring_component
+    managed_prometheus {
+      enabled = true
+    }
+  }
+
+  logging_config {
+    enable_components = local.default_logging_component
+  }
 }
 
 # We define explicit node pools, so that it can be modified without
@@ -180,9 +231,12 @@ resource "google_container_node_pool" "system_node_pools" {
   provider = google-beta
   count    = var.system_node_pool_enabled ? 1 : 0
 
-  project = var.project_id
-  name    = var.system_node_pool_name
-  cluster = google_container_cluster.gke_cluster.self_link
+  project  = var.project_id
+  name     = var.system_node_pool_name
+  cluster  = var.cluster_reference_type == "NAME" ? google_container_cluster.gke_cluster.name : google_container_cluster.gke_cluster.self_link
+  location = var.cluster_availability_type == "ZONAL" ? var.zone : var.region
+  version  = var.min_master_version
+
   autoscaling {
     total_min_node_count = var.system_node_pool_node_count.total_min_nodes
     total_max_node_count = var.system_node_pool_node_count.total_max_nodes
@@ -204,6 +258,8 @@ resource "google_container_node_pool" "system_node_pools" {
     service_account = var.service_account_email
     oauth_scopes    = var.service_account_scopes
     machine_type    = var.system_node_pool_machine_type
+    disk_size_gb    = var.system_node_pool_disk_size_gb
+    disk_type       = var.system_node_pool_disk_type
 
     dynamic "taint" {
       for_each = var.system_node_pool_taints
@@ -251,45 +307,6 @@ resource "google_container_node_pool" "system_node_pools" {
   }
 }
 
-# For container logs to show up under Cloud Logging and GKE metrics to show up
-# on Cloud Monitoring console, some project level roles are needed for the
-# node_service_account
-resource "google_project_iam_member" "node_service_account_log_writer" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${local.sa_email}"
-}
-
-resource "google_project_iam_member" "node_service_account_metric_writer" {
-  project = var.project_id
-  role    = "roles/monitoring.metricWriter"
-  member  = "serviceAccount:${local.sa_email}"
-}
-
-resource "google_project_iam_member" "node_service_account_monitoring_viewer" {
-  project = var.project_id
-  role    = "roles/monitoring.viewer"
-  member  = "serviceAccount:${local.sa_email}"
-}
-
-resource "google_project_iam_member" "node_service_account_resource_metadata_writer" {
-  project = var.project_id
-  role    = "roles/stackdriver.resourceMetadata.writer"
-  member  = "serviceAccount:${local.sa_email}"
-}
-
-resource "google_project_iam_member" "node_service_account_gcr" {
-  project = var.project_id
-  role    = "roles/storage.objectViewer"
-  member  = "serviceAccount:${local.sa_email}"
-}
-
-resource "google_project_iam_member" "node_service_account_artifact_registry" {
-  project = var.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${local.sa_email}"
-}
-
 data "google_client_config" "default" {}
 
 provider "kubernetes" {
@@ -301,7 +318,7 @@ provider "kubernetes" {
 module "workload_identity" {
   count   = var.configure_workload_identity_sa ? 1 : 0
   source  = "terraform-google-modules/kubernetes-engine/google//modules/workload-identity"
-  version = "29.0.0"
+  version = "~> 34.0"
 
   use_existing_gcp_sa = true
   name                = "workload-identity-k8-sa"
@@ -311,7 +328,32 @@ module "workload_identity" {
 
   # https://github.com/terraform-google-modules/terraform-google-kubernetes-engine/issues/1059
   depends_on = [
-    data.google_compute_default_service_account.default_sa,
+    data.google_project.project,
     google_container_cluster.gke_cluster
   ]
+}
+
+module "kubectl_apply" {
+  source = "../../management/kubectl-apply"
+
+  cluster_id = google_container_cluster.gke_cluster.id
+  project_id = var.project_id
+
+  apply_manifests = flatten([
+    for idx, network_info in var.additional_networks : [
+      {
+        source = "${path.module}/templates/gke-network-paramset.yaml.tftpl",
+        template_vars = {
+          name            = network_info.subnetwork,
+          network_name    = network_info.network
+          subnetwork_name = network_info.subnetwork,
+          device_mode     = strcontains(upper(network_info.nic_type), "RDMA") ? "RDMA" : "NetDevice"
+        }
+      },
+      {
+        source        = "${path.module}/templates/network-object.yaml.tftpl",
+        template_vars = { name = network_info.subnetwork }
+      }
+    ]
+  ])
 }

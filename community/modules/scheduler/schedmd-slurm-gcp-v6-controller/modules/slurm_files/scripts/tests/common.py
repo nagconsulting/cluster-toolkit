@@ -29,11 +29,21 @@ class Placeholder:
 
 @dataclass
 class TstNodeset:
-    nodeset_name: str
+    nodeset_name: str = "cantor"
     node_count_static: int = 0
     node_count_dynamic_max: int = 0
     node_conf: dict[str, Any] = field(default_factory=dict)
     instance_template: Optional[str] = None
+    reservation_name: Optional[str] = ""
+    zone_policy_allow: Optional[list[str]] = field(default_factory=list)
+    enable_placement: bool = True
+
+@dataclass
+class TstPartition:
+    partition_name: str = "euler"
+    partition_nodeset: list[str] = field(default_factory=list)
+    partition_nodeset_tpu: list[str] = field(default_factory=list)
+    enable_job_exclusive: bool = False
 
 @dataclass
 class TstCfg:
@@ -43,6 +53,7 @@ class TstCfg:
     partitions: dict[str, Placeholder] = field(default_factory=dict)
     nodeset: dict[str, TstNodeset] = field(default_factory=dict)
     nodeset_tpu: dict[str, TstNodeset] = field(default_factory=dict)
+    nodeset_dyn: dict[str, TstNodeset] = field(default_factory=dict)
     
     install_dir: Optional[str] = None
     output_dir: Optional[str] = None
@@ -69,6 +80,18 @@ class TstMachineConf:
 @dataclass
 class TstTemplateInfo:
     gpu_count: int = 0
+
+@dataclass
+class TstInstance:
+    name: str
+    region: str = "gondor"
+    zone: str = "anorien"
+    placementPolicyId: Optional[str] = None
+    physicalHost: Optional[str] = None
+
+    @property
+    def resourceStatus(self):
+        return {"physicalHost": self.physicalHost}
 
 def make_to_hostnames_mock(tbl: Optional[dict[str, list[str]]]):
     tbl = tbl or {}

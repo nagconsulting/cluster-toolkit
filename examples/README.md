@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > Migration to Slurm-GCP v6 is completed. See
-> [this update](#ongoing-migration-to-slurm-gcp-v6) for specific recommendations
+> [this update](#completed-migration-to-slurm-gcp-v6) for specific recommendations
 > and timelines.
 
 This directory contains a set of example blueprint files that can be fed into
@@ -15,51 +15,51 @@ md_toc github examples/README.md | sed -e "s/\s-\s/ * /"
 
 * [Instructions](#instructions)
   * [(Optional) Setting up a remote terraform state](#optional-setting-up-a-remote-terraform-state)
-* [Ongoing Migration to Slurm-GCP v6](#ongoing-migration-to-slurm-gcp-v6)
+* [Completed Migration to Slurm-GCP v6](#completed-migration-to-slurm-gcp-v6)
 * [Blueprint Descriptions](#blueprint-descriptions)
-  * [hpc-slurm-v5-legacy.yaml](#hpc-slurm-v5-legacyyaml-) ![core-badge]
+  * [hpc-slurm-v5-legacy.yaml](#hpc-slurm-v5-legacyyaml--) ![core-badge] ![deprecated-badge]
   * [hpc-slurm.yaml](#hpc-slurmyaml-) ![core-badge]
-  * [hpc-enterprise-slurm-v5-legacy.yaml](#hpc-enterprise-slurm-v5-legacyyaml-) ![core-badge]
+  * [hpc-enterprise-slurm-v5-legacy.yaml](#hpc-enterprise-slurm-v5-legacyyaml--) ![core-badge] ![deprecated-badge]
   * [hpc-enterprise-slurm.yaml](#hpc-enterprise-slurmyaml-) ![core-badge]
   * [hpc-slurm-static.yaml](#hpc-slurm-staticyaml-) ![core-badge]
   * [hpc-slurm6-tpu.yaml](#hpc-slurm6-tpuyaml--) ![community-badge] ![experimental-badge]
   * [hpc-slurm6-tpu-maxtext.yaml](#hpc-slurm6-tpu-maxtextyaml--) ![community-badge] ![experimental-badge]
   * [hpc-slurm6-apptainer.yaml](#hpc-slurm6-apptaineryaml--) ![community-badge] ![experimental-badge]
-  * [ml-slurm-v5-legacy.yaml](#ml-slurm-v5-legacyyaml-) ![core-badge]
+  * [ml-slurm-v5-legacy.yaml](#ml-slurm-v5-legacyyaml--) ![core-badge] ![deprecated-badge]
   * [ml-slurm.yaml](#ml-slurmyaml-) ![core-badge]
-  * [image-builder-v5-legacy.yaml](#image-builder-v5-legacyyaml-) ![core-badge]
-  * [image-builder.yaml](#image-builderyaml--) ![core-badge]
+  * [image-builder-v5-legacy.yaml](#image-builder-v5-legacyyaml--) ![core-badge] ![deprecated-badge]
+  * [image-builder.yaml](#image-builderyaml-) ![core-badge]
   * [serverless-batch.yaml](#serverless-batchyaml-) ![core-badge]
   * [serverless-batch-mpi.yaml](#serverless-batch-mpiyaml-) ![core-badge]
   * [pfs-lustre.yaml](#pfs-lustreyaml-) ![core-badge]
   * [ps-slurm.yaml](#ps-slurmyaml--) ![core-badge] ![experimental-badge]
   * [pfs-parallelstore.yaml](#pfs-parallelstoreyaml--) ![core-badge] ![experimental-badge]
-  * [cae-slurm-v5-legacy.yaml](#cae-slurm-v5-legacyyaml-) ![core-badge]
+  * [cae-slurm-v5-legacy.yaml](#cae-slurm-v5-legacyyaml--) ![core-badge] ![deprecated-badge]
   * [cae-slurm.yaml](#cae-slurmyaml-) ![core-badge]
   * [hpc-build-slurm-image.yaml](#hpc-build-slurm-imageyaml--) ![community-badge] ![experimental-badge]
-  * [hpc-slurm-ubuntu2004-v5-legacy.yaml](#hpc-slurm-ubuntu2004-v5-legacyyaml-) ![community-badge]
+  * [hpc-slurm-ubuntu2004-v5-legacy.yaml](#hpc-slurm-ubuntu2004-v5-legacyyaml--) ![community-badge] ![deprecated-badge]
   * [hpc-slurm-ubuntu2004.yaml](#hpc-slurm-ubuntu2004yaml--) ![community-badge]
-  * [pfs-daos.yaml](#pfs-daosyaml-) ![community-badge]
-  * [hpc-slurm-daos.yaml](#hpc-slurm-daosyaml-) ![community-badge]
-  * [hpc-amd-slurm-v5-legacy.yaml](#hpc-amd-slurm-v5-legacyyaml-) ![community-badge]
+  * [hpc-amd-slurm-v5-legacy.yaml](#hpc-amd-slurm-v5-legacyyaml--) ![community-badge] ![deprecated-badge]
   * [hpc-amd-slurm.yaml](#hpc-amd-slurmyaml-) ![community-badge]
   * [hpc-slurm-sharedvpc.yaml](#hpc-slurm-sharedvpcyaml--) ![community-badge] ![experimental-badge]
   * [client-google-cloud-storage.yaml](#client-google-cloud-storageyaml--) ![community-badge] ![experimental-badge]
   * [hpc-slurm-gromacs.yaml](#hpc-slurm-gromacsyaml--) ![community-badge] ![experimental-badge]
-  * [hpc-slurm-local-ssd-v5-legacy.yaml](#hpc-slurm-local-ssd-v5-legacyyaml--) ![community-badge] ![experimental-badge]
+  * [hpc-slurm-local-ssd-v5-legacy.yaml](#hpc-slurm-local-ssd-v5-legacyyaml---) ![community-badge] ![experimental-badge] ![deprecated-badge]
   * [hpc-slurm-local-ssd.yaml](#hpc-slurm-local-ssdyaml--) ![community-badge] ![experimental-badge]
   * [hcls-blueprint.yaml](#hcls-blueprintyaml-) ![core-badge]
-  * [hpc-gke.yaml](#hpc-gkeyaml--) ![community-badge] ![experimental-badge]
-  * [ml-gke](#ml-gkeyaml--) ![community-badge] ![experimental-badge]
-  * [storage-gke](#storage-gkeyaml--) ![community-badge] ![experimental-badge]
-  * [htc-slurm-v5-legacy.yaml](#htc-slurm-v5-legacyyaml--) ![community-badge] ![experimental-badge]
+  * [hpc-gke.yaml](#hpc-gkeyaml--) ![core-badge] ![experimental-badge]
+  * [ml-gke](#ml-gkeyaml--) ![core-badge] ![experimental-badge]
+  * [storage-gke](#storage-gkeyaml--) ![core-badge] ![experimental-badge]
+  * [gke-a3-megagpu](#gke-a3-megagpuyaml--) ![core-badge] ![experimental-badge]
+  * [gke-a3-highgpu](#gke-a3-highgpuyaml--) ![core-badge] ![experimental-badge]
+  * [htc-slurm-v5-legacy.yaml](#htc-slurm-v5-legacyyaml---) ![community-badge] ![experimental-badge] ![deprecated-badge]
   * [htc-slurm.yaml](#htc-slurmyaml-) ![community-badge]
   * [htc-htcondor.yaml](#htc-htcondoryaml--) ![community-badge] ![experimental-badge]
   * [fsi-montecarlo-on-batch.yaml](#fsi-montecarlo-on-batchyaml-) ![community-badge] ![experimental-badge]
   * [tutorial-starccm-slurm.yaml](#tutorial-starccm-slurmyaml--) ![community-badge] ![experimental-badge]
   * [tutorial-starccm.yaml](#tutorial-starccmyaml--) ![community-badge] ![experimental-badge]
   * [hpc-slurm-ramble-gromacs.yaml](#hpc-slurm-ramble-gromacsyaml--) ![community-badge] ![experimental-badge]
-  * [hpc-slurm-chromedesktop-v5-legacy.yaml](#hpc-slurm-chromedesktop-v5-legacyyaml--) ![community-badge] ![experimental-badge]
+  * [hpc-slurm-chromedesktop-v5-legacy.yaml](#hpc-slurm-chromedesktop-v5-legacyyaml---) ![community-badge] ![experimental-badge] ![deprecated-badge]
   * [flux-cluster](#flux-clusteryaml--) ![community-badge] ![experimental-badge]
   * [tutorial-fluent.yaml](#tutorial-fluentyaml--) ![community-badge] ![experimental-badge]
   * [omnia-cluster.yaml](#omnia-clusteryaml---) ![community-badge] ![experimental-badge] ![deprecated-badge]
@@ -124,7 +124,7 @@ You can set the configuration using the CLI in the `create` and `expand`
 subcommands as well:
 
 ```shell
-./ghpc create examples/hpc-slurm.yaml \
+./gcluster create examples/hpc-slurm.yaml \
   --vars "project_id=${GOOGLE_CLOUD_PROJECT}" \
   --backend-config "bucket=${GCS_BUCKET}"
 ```
@@ -139,7 +139,7 @@ subcommands as well:
 [configuration block]: https://developer.hashicorp.com/terraform/language/settings/backends/configuration#using-a-backend-block
 [gcs]: https://developer.hashicorp.com/terraform/language/settings/backends/gcs
 
-## Ongoing Migration to Slurm-GCP v6
+## Completed Migration to Slurm-GCP v6
 
 [Slurm-GCP](https://github.com/GoogleCloudPlatform/slurm-gcp) is the set of
 scripts and tools that automate the installation, deployment, and certain
@@ -148,16 +148,15 @@ Google Cloud Platform. It is recommended to use Slurm-GCP through the Cluster
 Toolkit where it is exposed as various modules.
 
 The Cluster Toolkit team has finished transitioning from Slurm-GCP v5 to Slurm-GCP v6 and
-now Slurm-GCP v6 is the recommended option. Following this, blueprint naming would be
-as follows:
+as of 10/11/2024, Slurm-GCP v6 is the recommended option. Blueprint naming is as
+follows:
 
 * Slurm v5: hpc-slurm-v5-legacy.yaml
 * Slurm v6: hpc-slurm.yaml
 
 > [!IMPORTANT]
-> Three months after Slurm-gcp V6 becomes the recommended version, Slurm v5
-> modules will be marked as deprecated and will be maintained in our repo for
-> another three months, at which point the modules will be removed from the Cluster
+> Slurm-GCP v5 modules are now marked as deprecated and will be maintained in our
+> repo till January 6, 2025. After that, the modules will be removed from the Cluster
 > Toolkit repo and regression tests will no longer run for V5. Those who choose
 > to not upgrade to V6 will still be able to use V5 modules by referencing
 > specific git tags in the module source lines.
@@ -166,7 +165,7 @@ as follows:
 
 * Robust reconfiguration
 
-  Reconfiguration is now managed by a service that runs on each instance. This has removed the dependency on the Pub/Sub Google cloud service, and provides a more consistent reconfiguration experience (when calling `ghpc deploy blueprint.yaml -w`). Reconfiguration has also been enabled by default.
+  Reconfiguration is now managed by a service that runs on each instance. This has removed the dependency on the Pub/Sub Google cloud service, and provides a more consistent reconfiguration experience (when calling `gcluster deploy blueprint.yaml -w`). Reconfiguration has also been enabled by default.
 
 * Faster deployments
 
@@ -178,7 +177,7 @@ as follows:
 
 * Fewer dependencies in the deployment environment
 
-  Reconfiguration and compute node cleanup no longer require users to install local python dependencies in the deployment environment (where ghpc is called). This has allowed for these features to be enabled by default.
+  Reconfiguration and compute node cleanup no longer require users to install local python dependencies in the deployment environment (where gcluster is called). This has allowed for these features to be enabled by default.
 
 * Flexible node to partition relation
 
@@ -209,7 +208,7 @@ Toolkit team, partners, etc.) and are labeled with the community badge
 Blueprints that are still in development and less stable are also labeled with
 the experimental badge (![experimental-badge]).
 
-### [hpc-slurm-v5-legacy.yaml] ![core-badge]
+### [hpc-slurm-v5-legacy.yaml] ![core-badge] ![deprecated-badge]
 
 > **Warning**: The variables `enable_reconfigure`,
 > `enable_cleanup_compute`, and `enable_cleanup_subscriptions`, if set to
@@ -217,7 +216,7 @@ the experimental badge (![experimental-badge]).
 >
 > ```shell
 > # Install Python3 and run
-> pip3 install -r https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/5.12.0/scripts/requirements.txt
+> pip3 install -r https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/5.12.2/scripts/requirements.txt
 > ```
 
 Creates a basic auto-scaling Slurm cluster with mostly default settings. The
@@ -318,7 +317,7 @@ For this example the following is needed in the selected region:
 * Compute Engine API: Resource policies: **one for each job in parallel** -
   _only needed for the `compute` partition_
 
-### [hpc-enterprise-slurm-v5-legacy.yaml] ![core-badge]
+### [hpc-enterprise-slurm-v5-legacy.yaml] ![core-badge] ![deprecated-badge]
 
 This advanced blueprint creates a cluster with Slurm with several performance
 tunings enabled, along with tiered file systems for higher performance. Some of
@@ -550,7 +549,7 @@ This blueprint creates a custom [Apptainer](https:https://apptainer.org) enabled
 
 [hpc-slurm6-apptainer.yaml]: ../community/examples/hpc-slurm6-apptainer.yaml
 
-### [ml-slurm-v5-legacy.yaml] ![core-badge]
+### [ml-slurm-v5-legacy.yaml] ![core-badge] ![deprecated-badge]
 
 This blueprint provisions an HPC cluster running the Slurm scheduler with the
 machine learning frameworks PyTorch and TensorFlow pre-installed on every
@@ -565,8 +564,8 @@ VM. The cluster has 2 partitions:
 To provision the cluster, please run:
 
 ```text
-./ghpc create examples/ml-slurm-v5-legacy.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
-./ghpc deploy ml-example
+./gcluster create examples/ml-slurm-v5-legacy.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
+./gcluster deploy ml-example
 ```
 
 After accessing the login node, you can activate the conda environment for each
@@ -584,13 +583,13 @@ An example benchmarking job for PyTorch can be run under Slurm:
 
 ```shell
 cp /var/tmp/torch_test.* .
-sbatch -N 1 torch_test.sh
+sbatch -N 1 --gpus-per-node=1 torch_test.sh
 ```
 
 When you are done, clean up the resources in reverse order of creation:
 
 ```text
-./ghpc destroy ml-example
+./gcluster destroy ml-example
 ```
 
 Finally, browse to the [Cloud Console][console-images] to delete your custom
@@ -614,8 +613,8 @@ VM. The cluster has 2 partitions:
 To provision the cluster, please run:
 
 ```text
-./ghpc create examples/ml-slurm.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
-./ghpc deploy ml-example-v6
+./gcluster create examples/ml-slurm.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
+./gcluster deploy ml-example-v6
 ```
 
 After accessing the login node, you can activate the conda environment for each
@@ -633,13 +632,13 @@ An example benchmarking job for PyTorch can be run under Slurm:
 
 ```shell
 cp /var/tmp/torch_test.* .
-sbatch -N 1 torch_test.sh
+sbatch -N 1 --gpus-per-node=1 torch_test.sh
 ```
 
 When you are done, clean up the resources in reverse order of creation:
 
 ```text
-./ghpc destroy ml-example-v6
+./gcluster destroy ml-example-v6
 ```
 
 Finally, browse to the [Cloud Console][console-images] to delete your custom
@@ -648,7 +647,7 @@ timestamp for uniqueness.
 
 [ml-slurm.yaml]: ../examples/ml-slurm.yaml
 
-### [image-builder-v5-legacy.yaml] ![core-badge]
+### [image-builder-v5-legacy.yaml] ![core-badge] ![deprecated-badge]
 
 This blueprint uses the [Packer template module][pkr] to create a custom VM
 image and uses it to provision an HPC cluster using the Slurm scheduler. By
@@ -670,8 +669,8 @@ example takes the following steps:
 Create the deployment folder from the blueprint:
 
 ```text
-./ghpc create examples/image-builder-v5-legacy.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
-./ghpc deploy image-builder-001"
+./gcluster create examples/image-builder-v5-legacy.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
+./gcluster deploy image-builder-001"
 ```
 
 Follow the on-screen prompts to approve the creation of each deployment group.
@@ -795,8 +794,8 @@ example takes the following steps:
 Create the deployment folder from the blueprint:
 
 ```text
-./ghpc create examples/image-builder.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
-./ghpc deploy image-builder-v6-001"
+./gcluster create examples/image-builder.yaml --vars "project_id=${GOOGLE_CLOUD_PROJECT}"
+./gcluster deploy image-builder-v6-001"
 ```
 
 Follow the on-screen prompts to approve the creation of each deployment group.
@@ -1057,7 +1056,7 @@ For this example the following is needed in the selected region:
 [pfs-parallelstore.yaml]: ./pfs-parallelstore.yaml
 [Parallelstore]: ../modules/file-system/parallelstore/README.md
 
-### [cae-slurm-v5-legacy.yaml] ![core-badge]
+### [cae-slurm-v5-legacy.yaml] ![core-badge] ![deprecated-badge]
 
 The Computer Aided Engineering (CAE) blueprint captures a reference architecture
 where the right cloud components are assembled to optimally cater to the
@@ -1142,7 +1141,7 @@ The blueprint contains 3 groups:
 
 [hpc-build-slurm-image.yaml]: ../community/examples/hpc-build-slurm-image.yaml
 
-### [hpc-slurm-ubuntu2004-v5-legacy.yaml] ![community-badge]
+### [hpc-slurm-ubuntu2004-v5-legacy.yaml] ![community-badge] ![deprecated-badge]
 
 > **Warning**: The variables `enable_reconfigure`,
 > `enable_cleanup_compute`, and `enable_cleanup_subscriptions`, if set to
@@ -1150,7 +1149,7 @@ The blueprint contains 3 groups:
 >
 > ```shell
 > # Install Python3 and run
-> pip3 install -r https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/5.12.0/scripts/requirements.txt
+> pip3 install -r https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/5.12.2/scripts/requirements.txt
 > ```
 
 Similar to the [hpc-slurm-v5-legacy.yaml] example, but using Ubuntu 20.04 instead of CentOS 7.
@@ -1213,23 +1212,7 @@ For this example the following is needed in the selected region:
 * Compute Engine API: Resource policies: **one for each job in parallel** -
   _only needed for `compute` partition_
 
-### [pfs-daos.yaml] ![community-badge]
-
-This example provisions a DAOS cluster with [managed instance groups][migs] for the servers and for clients. It is more extensively discussed in a dedicated [README for Intel
-examples][intel-examples-readme].
-
-[pfs-daos.yaml]: ../community/examples/intel/pfs-daos.yaml
-[migs]: https://cloud.google.com/compute/docs/instance-groups
-
-### [hpc-slurm-daos.yaml] ![community-badge]
-
-This example provisions DAOS servers and a Slurm cluster. It is
-more extensively discussed in a dedicated [README for Intel
-examples][intel-examples-readme].
-
-[hpc-slurm-daos.yaml]: ../community/examples/intel/hpc-slurm-daos.yaml
-
-### [hpc-amd-slurm-v5-legacy.yaml] ![community-badge]
+### [hpc-amd-slurm-v5-legacy.yaml] ![community-badge] ![deprecated-badge]
 
 This example provisions a Slurm cluster using AMD VM machine types. It
 automates the initial setup of Spack, including a script that can be used to
@@ -1277,7 +1260,7 @@ To use the blueprint you must supply the project id and the name of an existing
 bucket:
 
 ```shell
-./ghpc create community/examples/client-google-cloud-storage.yaml \
+./gcluster create community/examples/client-google-cloud-storage.yaml \
   --vars project_id=<project_id> \
   --vars existing_bucket_name=<name_of_existing_bucket>
 ```
@@ -1397,7 +1380,7 @@ the nodes are provisioned. All nodes mount a filestore instance on `/home`.
 [omnia-github]: https://github.com/dellhpc/omnia
 [omnia-cluster.yaml]: ../community/examples/omnia-cluster.yaml
 
-### [hpc-slurm-local-ssd-v5-legacy.yaml] ![community-badge] ![experimental-badge]
+### [hpc-slurm-local-ssd-v5-legacy.yaml] ![community-badge] ![experimental-badge] ![deprecated-badge]
 
 This blueprint demonstrates the use of Slurm and Filestore, with the definition
 of a partition which deploys compute nodes that have local ssd drives deployed.
@@ -1424,7 +1407,7 @@ GROMACS with GPUs and CPUs on Google Cloud. For full documentation, refer
 [document]: ../docs/videos/healthcare-and-life-sciences/README.md
 [hcls-blueprint.yaml]:  ../example/hcls-blueprint.yaml
 
-### [hpc-gke.yaml] ![community-badge] ![experimental-badge]
+### [hpc-gke.yaml] ![core-badge] ![experimental-badge]
 
 This blueprint uses GKE to provision a Kubernetes cluster with a system node
 pool (included in gke-cluster module) and an autoscaling compute node pool. It
@@ -1436,7 +1419,7 @@ to the cluster using `kubectl` and will run on the specified node pool.
 
 [hpc-gke.yaml]: ../examples/hpc-gke.yaml
 
-### [ml-gke.yaml] ![community-badge] ![experimental-badge]
+### [ml-gke.yaml] ![core-badge] ![experimental-badge]
 
 This blueprint demonstrates how to set up a GPU GKE cluster using the Cluster
 Toolkit. It includes:
@@ -1480,10 +1463,10 @@ guest_accelerator:
 - type: nvidia-l4
   count: 1
   gpu_sharing_config:
-  - max_shared_clients_per_gpu: 2
+    max_shared_clients_per_gpu: 2
     gpu_sharing_strategy: "TIME_SHARING"
   gpu_driver_installation_config:
-  - gpu_driver_version: "LATEST"
+    gpu_driver_version: "LATEST"
 ```
 
 * Configuration of the cluster using default drivers provided by GKE.
@@ -1504,7 +1487,7 @@ credentials for the created cluster_ and _submit a job calling `nvidia_smi`_.
 [ml-gke.yaml]: ../examples/ml-gke.yaml
 [`kubernetes-operations`]: ../community/modules/scripts/kubernetes-operations/README.md
 
-### [storage-gke.yaml] ![community-badge] ![experimental-badge]
+### [storage-gke.yaml] ![core-badge] ![experimental-badge]
 
 This blueprint shows how to use different storage options with GKE in the toolkit.
 
@@ -1535,6 +1518,52 @@ cleaned up when the job is deleted.
 
 [storage-gke.yaml]: ../examples/storage-gke.yaml
 
+### [gke-a3-megagpu.yaml] ![core-badge] ![experimental-badge]
+
+This blueprint shows how to provision a GKE cluster with A3 Mega machines in the toolkit.
+
+After provisioning the cluster and the nodepool, the below components will be installed
+to enable GPUDirect for the A3 Mega machines.
+
+* NCCL plugin for GPUDirect [TCPXO](https://github.com/GoogleCloudPlatform/container-engine-accelerators/tree/master/gpudirect-tcpxo)
+* [NRI](https://github.com/GoogleCloudPlatform/container-engine-accelerators/tree/master/nri_device_injector) device injector plugin
+* Provide support for injecting GPUDirect required components(annotations, volumes, rxdm sidecar etc.) into the user workload in the form of Kubernetes Job.
+  * Provide sample workload to showcase how it will be updated with the required components injected, and how it can be deployed.
+  * Allow user to use the provided script to update their own workload and deploy.
+
+> [!Note]
+> The Kubernetes API server will only allow requests from authorized networks.
+> The `gke-cluster` module needs access to the Kubernetes API server
+> to apply a manifest. **You must use
+> the `authorized_cidr` variable to supply an authorized network which contains
+> the IP address of the machine deploying the blueprint, for example
+> `--vars authorized_cidr=<your-ip-address>/32`.** You can use a service like
+> [whatismyip.com](https://whatismyip.com) to determine your IP address.
+
+[gke-a3-megagpu.yaml]: ../examples/gke-a3-megagpu.yaml
+
+### [gke-a3-highgpu.yaml] ![core-badge] ![experimental-badge]
+
+This blueprint shows how to provision a GKE cluster with A3 High machines in the toolkit.
+
+After provisioning the cluster and the nodepool, the below components will be installed
+to enable GPUDirect for the A3 High machines.
+
+* NCCL plugin for GPUDirect [TCPX](https://github.com/GoogleCloudPlatform/container-engine-accelerators/tree/master/gpudirect-tcpx)
+* [NRI](https://github.com/GoogleCloudPlatform/container-engine-accelerators/tree/master/nri_device_injector) device injector plugin
+* Provide support for injecting GPUDirect required components(annotations, volumes, rxdm sidecar etc.) into the user workload in the form of Kubernetes Job via a script.
+
+> [!Note]
+> The Kubernetes API server will only allow requests from authorized networks.
+> The `gke-cluster` module needs access to the Kubernetes API server
+> to apply a manifest. **You must use
+> the `authorized_cidr` variable to supply an authorized network which contains
+> the IP address of the machine deploying the blueprint, for example
+> `--vars authorized_cidr=<your-ip-address>/32`.** You can use a service like
+> [whatismyip.com](https://whatismyip.com) to determine your IP address.
+
+[gke-a3-highgpu.yaml]: ../examples/gke-a3-highgpu.yaml
+
 ### [htc-htcondor.yaml] ![community-badge] ![experimental-badge]
 
 This blueprint provisions an auto-scaling [HTCondor][htcondor] pool based upon
@@ -1547,7 +1576,7 @@ walks through the use of this blueprint.
 [htc-htcondor.yaml]: ../community/examples/htc-htcondor.yaml
 [hpcvmimage]: https://cloud.google.com/compute/docs/instances/create-hpc-vm
 
-### [htc-slurm-v5-legacy.yaml] ![community-badge] ![experimental-badge]
+### [htc-slurm-v5-legacy.yaml] ![community-badge] ![experimental-badge] ![deprecated-badge]
 
 This blueprint provisions a cluster using the Slurm scheduler in a configuration
 tuned for the execution of many short-duration, loosely-coupled (non-MPI) jobs.
@@ -1612,7 +1641,7 @@ tutorial.
 
 [tutorial-fluent.yaml]: ../community/examples/tutorial-fluent.yaml
 
-### [hpc-slurm-chromedesktop-v5-legacy.yaml] ![community-badge] ![experimental-badge]
+### [hpc-slurm-chromedesktop-v5-legacy.yaml] ![community-badge] ![experimental-badge] ![deprecated-badge]
 
 This example shows how to use the `chrome-remote-desktop` module with a Slurm
 partition to be able to `salloc` a GPU accelerated remote desktop.
@@ -1646,6 +1675,28 @@ the VPC. One may need to create firewall rules allowing SSH to be able to access
 the controller and login nodes. Also since this blueprint doesn't use external
 IPs for compute nodes, one must needs to [set up cloud nat][cloudnat] and
 [set up iap][iap].
+
+Now, one needs to update the blueprint to include shared vpc details. In the
+network configuration, update the details for shared vpc as mentioned below,
+
+```yaml
+vars:
+  project_id:  <service-project> # update /w the service project id in which shared network will be used.
+  host_project_id: <host-project> # update /w the host project id in which shared network is created.
+  deployment_name: hpc-small-shared-vpc
+  region: us-central1
+  zone: us-central1-c
+
+deployment_groups:
+- group: primary
+  modules:
+  - id: network1
+    source: modules/network/pre-existing-vpc
+    settings:
+      project_id: $(vars.host_project_id)
+      network_name: <shared-network> # update /w shared network name
+      subnetwork_name: <shared-subnetwork> # update /w shared sub-net name
+```
 
 [hpc-slurm-sharedvpc.yaml]: ../community/examples/hpc-slurm-sharedvpc.yaml
 [fs-shared-vpc]: https://cloud.google.com/filestore/docs/shared-vpc
@@ -1682,10 +1733,9 @@ vars:
 deployment_groups:
 - group: groupName
   modules:
-
-  # Local source, prefixed with ./ (/ and ../ also accepted)
+  # Embedded module (part of the toolkit), prefixed with `modules/` or `community/modules`
   - id: <a unique id> # Required: Name of this module used to uniquely identify it.
-    source: ./modules/role/module-name # Required: Points to the module directory.
+    source: modules/role/module-name # Required
     kind: < terraform | packer > # Optional: Type of module, currently choose from terraform or packer. If not specified, `kind` will default to `terraform`
     # Optional: All configured settings for the module. For terraform, each
     # variable listed in variables.tf can be set here, and are mandatory if no
@@ -1699,14 +1749,18 @@ deployment_groups:
         key3a: value3a
         key3b: value3b
 
-  # Embedded module (part of the toolkit), prefixed with modules/
-  - source: modules/role/module-name
-
   # GitHub module over SSH, prefixed with git@github.com
-  - source: git@github.com:org/repo.git//modules/role/module-name
+  - source: git@github.com:org/repo.git//path/to/module
 
   # GitHub module over HTTPS, prefixed with github.com
-  - source: github.com/org/repo//modules/role/module-name
+  - source: github.com/org/repo//path/to/module
+
+  # Local absolute source, prefixed with /
+  - source: /path/to/module
+
+  # Local relative (to current working directory) source, prefixed with ./ or ../
+  - source: ../path/to/module
+  # NOTE: Do not reference toolkit modules by local source, use embedded source instead.
 ```
 
 ## Writing an HPC Blueprint
@@ -1723,6 +1777,8 @@ scratch.
 ```yaml
 ---
 blueprint_name: # boilerplate-blueprint
+toolkit_modules_url: # github.com/GoogleCloudPlatform/cluster-toolkit
+toolkit_modules_version: # v1.38.0
 
 vars:
   project_id: # my-project-id
@@ -1745,6 +1801,8 @@ deployment_groups:
    must abide to label value naming constraints: `blueprint_name` must be at most
    63 characters long, and can only contain lowercase letters, numeric
    characters, underscores and dashes.
+
+* **toolkit_modules_url** and **toolkit_modules_version** (optional): The blueprint schema provides the optional fields `toolkit_modules_url` and `toolkit_modules_version` to version a blueprint. When these fields are provided, any module in the blueprint with a reference to an embedded module in its source field will be updated to reference the specified GitHub source and toolkit version in the deployment folder. `toolkit_modules_url` specifies the base URL of the GitHub repository containing the modules and `toolkit_modules_version` specifies the version of the modules to use. `toolkit_modules_url` and `toolkit_modules_version` should be provided together when in use.
 
 ### Deployment Variables
 
@@ -1794,38 +1852,6 @@ file-system etc.).
 When possible, custom modules should use these roles so that they match other
 modules defined by the toolkit. If a custom module does not fit into these
 roles, a new role can be defined.
-
-A module's parent folder will define the module’s role if possible. Therefore,
-regardless of where the module is located, the module directory should be
-explicitly referenced at least 2 layers deep, where the top layer refers to the
-“role” of that module.
-
-If a module is not defined at least 2 layers deep and the `ghpc_role` label has
-not been explicitly set in settings, ghpc_role will default to `undefined`.
-
-Below we show some of the core modules and their roles (as parent folders).
-
-```text
-modules/
-└── <<ROLE>
-    └── <<MODULE_NAME>>
-
-modules/
-├── compute
-│   └── vm-instance
-├── file-system
-│   ├── pre-existing-network-storage
-│   └── filestore
-├── monitoring
-│   └── dashboard
-├── network
-│   ├── pre-existing-vpc
-│   └── vpc
-├── packer
-│   └── custom-image
-└── scripts
-    └── startup-script
-```
 
 ### Deployment Groups
 
@@ -1943,7 +1969,7 @@ To avoid these issues, the `ghpc_stage` function can be used to copy a file (or 
 ```
 
 The `ghpc_stage` function will always look first in the path specified in the blueprint. If the file is not found at this path then `ghpc_stage` will look for the staged file in the deployment folder, if a deployment folder exists.
-This means that you can redeploy a blueprint (`ghpc deploy <blueprint> -w`) so long as you have the deployment folder from the original deployment, even if locally referenced files are not available.
+This means that you can redeploy a blueprint (`gcluster deploy <blueprint> -w`) so long as you have the deployment folder from the original deployment, even if locally referenced files are not available.
 
 <!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements

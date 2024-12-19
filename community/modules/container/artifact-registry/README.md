@@ -16,8 +16,8 @@ Create a standard Docker repository.
 
 ```yaml
 - id: registry
-source: community/modules/container/artifact-registry
-settings:
+  source: community/modules/container/artifact-registry
+  settings:
     repo_mode: STANDARD_REPOSITORY
     format: DOCKER
 ```
@@ -26,8 +26,8 @@ Mirror of public Docker Hub repository.
 
 ```yaml
 - id: dockerhub_registry
-source: community/modules/container/artifact-registry
-settings:
+  source: community/modules/container/artifact-registry
+  settings:
     repo_mode: REMOTE_REPOSITORY
     format: DOCKER
     repo_public_repository: DOCKER_HUB
@@ -37,8 +37,8 @@ Mirror of NVIDIA's [NGC Catalog](https://catalog.ngc.nvidia.com/containers). [AP
 
 ```yaml
 - id: ngc_registry
-source: community/modules/container/artifact-registry
-settings:
+  source: community/modules/container/artifact-registry
+  settings:
     repo_mode: REMOTE_REPOSITORY
     format: DOCKER
     repo_mirror_url: "https://nvcr.io"

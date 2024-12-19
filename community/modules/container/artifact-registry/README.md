@@ -55,15 +55,23 @@ Retrieve `$REPOSITORY_NAME` from [Artifact Registry](https://console.cloud.googl
 gcloud artifacts repositories list --project="${PROJECT_ID}"
 ```
 
-Pull a container to your internal Artifact Repository.
+Pulling containers from your mirrored internal Artifact Repositories.
+
+Pull [Ubuntu](https://hub.docker.com/_/ubuntu) from Docker Hub mirror.
 
 ```yaml
 docker pull ${REGION}-docker.pkg.dev/${PROJECT_NAME}/${REPOSITORY_NAME}/library/ubuntu:latest
 ```
 
-Alternatively, you can proceed with running SLURM jobs, as [NVIDIA/pyxis](https://github.com/NVIDIA/pyxis) will now be able to pull and use these containers directly.
+Pull [Pytorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) from NGC Catalog mirror.
 
-Note: Docker registries ONLY supported so far. Placeholders do exist for other registry types which may or may not work.
+```yaml
+docker pull ${REGION}-docker.pkg.dev/${PROJECT_NAME}/${REPOSITORY_NAME}/nvidia/pytorch:24.11-py3
+```
+
+Alternatively, proceed with running SLURM's [NVIDIA/pyxis](https://github.com/NVIDIA/pyxis) plugin, which will now be able to pull and use these containers directly from the mirrored repositories.
+
+Note: only Docker registries have been tested so far. Placeholders do exist for other registry types which may or may not work.
 
 <!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements

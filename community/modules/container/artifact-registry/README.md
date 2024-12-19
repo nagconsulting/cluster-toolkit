@@ -28,8 +28,8 @@ Mirror of public Docker Hub repository.
 - id: dockerhub_registry
 source: community/modules/container/artifact-registry
 settings:
-    repo_mode: DOCKER
-    format: REMOTE_REPOSITORY
+    repo_mode: REMOTE_REPOSITORY
+    format: DOCKER
     repo_public_repository: DOCKER_HUB
 ```
 

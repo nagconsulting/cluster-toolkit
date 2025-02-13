@@ -377,6 +377,11 @@ class VirtualSubnet(CloudResource):
         help_text="CIDR for this subnet",
         validators=[CIDRValidator],
     )
+    private_google_access_enabled = models.BooleanField(
+        default=True,
+        null=False,
+        help_text="Would you like to use Private Google Access with this subnet?"
+    )
 
     def __str__(self):
         return f"{self.vpc.name} - {self.name} - {self.cloud_region}"
@@ -801,6 +806,9 @@ class Cluster(CloudResource):
         help_text=(
             "Would you like to send Slurm accounting data to BigQuery?"
         ),
+    )
+    enable_guacamole_vdi = models.BooleanField(
+        default=False, help_text="Deploy a containerized Guacamole VDI instance on the cluster login node?"
     )
 
     def get_access_key(self):
@@ -1658,3 +1666,71 @@ class WorkbenchMountPoint(models.Model):
 
     def __str__(self):
         return f"{self.mount_path} on {self.workbench}"
+
+
+VDI_LABELS = {
+    "GuacamoleInstance": "Guacamole",
+    "NoVNCInstance": "NoVNC", # example: not implemented
+    # add more as needed...
+}
+
+class VDIInstance(models.Model):
+    """Abstract base model for VDI instances"""
+
+    cluster = models.OneToOneField(
+        Cluster,
+        on_delete=models.CASCADE,
+        related_name="vdi_instance"
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+
+    class Meta:
+        abstract = True
+
+    @property
+    def vdi_type_name(self):
+        return VDI_LABELS.get(self.__class__.__name__, "Unknown VDI")
+
+
+class GuacamoleInstance(VDIInstance):
+    """Guacamole-specific VDI instance"""
+
+    guac_url = models.URLField(
+        help_text="Base URL for the Guac server (<login-node-ip>:8080)"
+    )
+
+    api_key = models.CharField(
+        max_length=512,
+        help_text="API key for authentication"
+    )
+
+    GUACAMOLE_STATUS = (
+        ("n", "Guacamole instance setup process will start soon"),
+        ("i", "Guacamole instance setup process has started"),
+        ("r", "Guacamole instance is available"),
+        ("e", "Guacamole instance deployment failed"),
+    )
+
+    status = models.CharField(
+        max_length=2,
+        choices=GUACAMOLE_STATUS,
+        default="n",
+        help_text="Status of this Guacamole instance",
+    )
+
+    def get_secret_name(self):
+        return f"guacamole-api-key-{self.name}-{self.id}"
+
+    def __str__(self):
+        return f"Guacamole VDI for {self.cluster.name}"
+
+    @property
+    def vdi_type_name(self):
+        return "Guacamole"

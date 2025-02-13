@@ -174,6 +174,7 @@ class ClusterForm(forms.ModelForm):
             "controller_node_image",
             "use_cloudsql",
             "use_bigquery",
+            "enable_guacamole_vdi",
         )
 
         widgets = {
@@ -217,6 +218,7 @@ class ClusterForm(forms.ModelForm):
                                                        "value": "",}),
             "use_cloudsql": forms.CheckboxInput(attrs={"class": "required checkbox"}),
             "use_bigquery": forms.CheckboxInput(attrs={"class": "required checkbox"}),
+            "enable_guacamole_vdi": forms.CheckboxInput(attrs={"class": "required checkbox"}),
         }
 
 
@@ -834,6 +836,7 @@ class VirtualSubnetForm(forms.ModelForm):
             "name": forms.TextInput(attrs={"class": "form-control"}),
             "cidr": forms.TextInput(attrs={"class": "form-control"}),
             "cloud_region": forms.Select(attrs={"class": "form-control"}),
+            "private_google_access_enabled": forms.CheckboxInput(attrs={"class": "form-control"}),
         }
 
 
@@ -1119,3 +1122,9 @@ class ImageImportForm(forms.ModelForm):
         startup_scripts = owned_scripts | authorized_scripts
 
         return startup_scripts
+
+
+class GuacamoleInstanceForm(forms.ModelForm):
+    class Meta:
+        model = GuacamoleInstance
+        fields = ["guac_url", "api_key", "status"]

@@ -28,7 +28,8 @@ locals {
     "logging.logWriter",
     "monitoring.metricWriter",
     "cloudtrace.agent",
-    "pubsub.admin"
+    "pubsub.admin",
+    "secretmanager.admin"
   ]
 
   deploy_key1 = var.deployment_key != "" ? filebase64(var.deployment_key) : ""

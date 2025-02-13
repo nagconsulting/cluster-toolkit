@@ -29,6 +29,7 @@ from .views.benchmarks import *
 from .views.workbench import *
 from .views.users import *
 from .views.vpc import *
+from .views.vdi import *
 from .views.filesystems import *
 from .views.gcpfilestore import *
 from .views.grafana import GrafanaProxyView, GrafanaView
@@ -47,6 +48,7 @@ urlpatterns = [
     path("clusters/", ClusterListView.as_view(), name="clusters"),
     path("vpc/", VPCListView.as_view(), name="vpcs"),
     path("applications/", ApplicationListView.as_view(), name="applications"),
+    path('vdis/', VDIListView.as_view(), name='vdis'),
     path("jobs/", JobListView.as_view(), name="jobs"),
     path("benchmarks/", BenchmarkListView.as_view(), name="benchmarks"),
     path(

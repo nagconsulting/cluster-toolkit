@@ -266,6 +266,20 @@
       </div>
     </div>
   </div>
+  <div class="form-group">
+    {{ form.enable_guacamole_vdi.errors }}
+    <div class="grid-container">
+      <label class="slider-switch-container">
+        <div class="slider-switch">
+          {{ form.enable_guacamole_vdi }}
+          <span class="slider"></span>
+        </div>
+      </label>
+      <div class="help-text">
+        {{ form.enable_guacamole_vdi.help_text }}
+      </div>
+    </div>
+  </div>
   <hr>
 
   <br />

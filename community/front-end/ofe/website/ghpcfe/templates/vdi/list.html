@@ -1,0 +1,60 @@
+{% extends "base_generic.html" %}
+{% load static %}
+
+{% block content %}
+<h2>VDI Instances</h2>
+<hr>
+
+{% if vdi_list %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Cluster</th>
+      <th>VDI Type</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for vdi in vdi_list %}
+    <tr>
+      <td>
+        {{ vdi.id }}
+      </td>
+      <td>
+        <a href="../cluster/{{ vdi.cluster.id }}">
+          {{ vdi.cluster.name }} (ID: {{ vdi.cluster.id }})
+        </a>
+      </td>
+      <td>
+        {{ vdi.vdi_type_name }}
+      </td>
+      <td>
+        {% if vdi.status == "i" %}
+        <img src="/static/img/loading.gif" style="width:32px;height:32px;">
+        {% endif %}
+        {% if vdi.status == "r" %}
+        <img src="/static/img/status-ready.png" style="width:32px;height:32px;">
+        {% endif %}
+        {% if vdi.status == "n" %}
+        <img src="/static/img/status-configured.png" style="width:30px;height:32px;">
+        {% endif %}
+        {{ vdi.get_status_display }}
+      </td>
+      <td>
+        {% if vdi.vdi_type_name == "GuacamoleInstance" %}
+          <a href="{{ vdi.guac_url }}" target="_blank" class="btn btn-sm btn-primary">
+            Open Guacamole
+          </a>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No VDI instances found. You can create one when you deploy a cluster.</p>
+{% endif %}
+
+{% endblock %}

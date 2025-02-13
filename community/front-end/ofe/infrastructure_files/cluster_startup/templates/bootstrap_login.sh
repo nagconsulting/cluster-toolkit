@@ -17,13 +17,15 @@
 BUCKET={{ server_bucket }}
 CLUSTER_ID={{ cluster.id }}
 SPACK_DIR={{ spack_dir }}
+ENABLE_GUACAMOLE_VDI={{ enable_guacamole_vdi }}
+CLUSTER_NAME={{ cluster.name }}
 
 echo "This is the startup script for the login nodes on cluster ${CLUSTER_ID}"
 
-# Install ansible
+# Install ansible and google.cloud collection
 # Download ansible playbook from GCS bucket
 # Set up our facts file
-# Run ansible for controller
+# Run ansible for login
 
 set -x
 set -e
@@ -32,6 +34,8 @@ if [[ $(type -P yum) ]]; then
 else
 	apt install -y ansible
 fi
+
+ansible-galaxy collection install google.cloud:1.5.1
 
 cd /tmp
 gsutil -m cp -r "gs://${BUCKET}/clusters/ansible_setup" /tmp
@@ -44,6 +48,8 @@ cat >/etc/ansible/facts.d/ghpcfe.fact <<EOF
 cluster_id=${CLUSTER_ID}
 cluster_bucket=${BUCKET}
 spack_dir=${SPACK_DIR}
+enable_guacamole_vdi=${ENABLE_GUACAMOLE_VDI}
+cluster_name=${CLUSTER_NAME}
 EOF
 
 exec ansible-playbook ./login.yaml

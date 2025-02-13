@@ -14,3 +14,7 @@
 
 ---
 spack_dir: "{{ ansible_local.ghpcfe.config.spack_dir }}"
+enable_guacamole_vdi: "{{ ansible_local.ghpcfe.config.enable_guacamole_vdi }}"
+guacamole_admin_user: ofe-guacamole-admin
+cluster_id: "{{ ansible_local.ghpcfe.config.cluster_id }}"
+cluster_name: "{{ ansible_local.ghpcfe.config.cluster_name }}"

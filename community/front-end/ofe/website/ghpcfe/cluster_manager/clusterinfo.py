@@ -35,7 +35,7 @@ from . import cloud_info
 from . import utils
 
 from .. import grafana
-from ..models import Cluster, ApplicationInstallationLocation, ComputeInstance
+from ..models import Cluster, ApplicationInstallationLocation, ComputeInstance, GuacamoleInstance
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +319,7 @@ class ClusterInfo:
                         "server_bucket": self.config["server"]["gcs_bucket"],
                         "cluster": self.cluster,
                         "spack_dir": self.cluster.spackdir,
+                        "enable_guacamole_vdi": self.cluster.enable_guacamole_vdi,
                         "fec2_topic": c2.get_topic_path(),
                         "fec2_subscription": c2.get_cluster_subscription_path(
                             self.cluster.id
@@ -395,8 +396,17 @@ class ClusterInfo:
         return list(filter(matches, state["resources"]))
 
     def _create_model_instances_from_tf_state(self, state, filters):
-        print(self._get_tf_state_resource(state, filters))
-        tf_nodes = self._get_tf_state_resource(state, filters)[0]["instances"]
+        tf_resources = self._get_tf_state_resource(state, filters)
+        print(tf_resources)
+
+        if not tf_resources:
+            logger.error(f"No resources found for filters: {filters}")
+            return []
+
+        tf_nodes = tf_resources[0].get("instances", [])
+        if not tf_nodes:
+            logger.error(f"No instances found for resource with filters: {filters}")
+            return []
 
         def model_from_tf(tf):
             ci_kwargs = {
@@ -447,22 +457,36 @@ class ClusterInfo:
         # resources At the moment, pull from controller & login instances. This
         # misses "compute" nodes, but they're going to just be the same as
         # controller & login until we start setting them.
+        service_accounts = {}
 
-        filters = {
-            "module": "module.slurm_controller.module.slurm_controller_instance",  #pylint:disable=line-too-long
+        controller_filters = {
+            "module": "module.slurm_controller",
+            "type": "google_compute_instance_from_template",
+            "name": "controller",
+        }
+
+        controller_resources = self._get_tf_state_resource(tf_state, controller_filters)
+        if controller_resources:
+            controller_instance = controller_resources[0]["instances"][0]
+            service_accounts["controller"] = controller_instance["attributes"]["service_account"][0]["email"]
+        else:
+            logger.error(f"No resources found for controller filters: {controller_filters}")
+
+        login_filters = {
+            "module": 'module.slurm_controller.module.slurm_login_instance["slurm-login"]',
+            "type": "google_compute_instance_from_template",
             "name": "slurm_instance",
         }
-        tf_node = self._get_tf_state_resource(tf_state, filters)[0]["instances"][0]  #pylint:disable=line-too-long
-        ctrl_sa = tf_node["attributes"]["service_account"][0]["email"]
 
-        filters = {
-            "module": 'module.slurm_controller.module.slurm_login_instance["slurm-login"]',  #pylint:disable=line-too-long
-            "name": "slurm_instance",
-        }
-        tf_node = self._get_tf_state_resource(tf_state, filters)[0]["instances"][0]  #pylint:disable=line-too-long
-        login_sa = tf_node["attributes"]["service_account"][0]["email"]
+        login_resources = self._get_tf_state_resource(tf_state, login_filters)
+        if login_resources:
+            login_instance = login_resources[0]["instances"][0]
+            service_accounts["login"] = login_instance["attributes"]["service_account"][0]["email"]
+            service_accounts["compute"] = login_instance["attributes"]["service_account"][0]["email"]
+        else:
+            logger.error(f"No resources found for login filters: {login_filters}")
 
-        return {"controller": ctrl_sa, "login": login_sa, "compute": login_sa}
+        return service_accounts
 
     def _apply_service_account_permissions(self, service_accounts):
         # Need to give permission for all instances to download startup scripts
@@ -530,12 +554,15 @@ class ClusterInfo:
                 self.cluster.status = "i"
                 self.cluster.save()
 
+                mgmt_filters = {
+                    "module": "module.slurm_controller",
+                    "type": "google_compute_instance_from_template",
+                    "name": "controller",
+                }
+
                 mgmt_nodes = self._create_model_instances_from_tf_state(
                     state,
-                    {
-                        "module": "module.slurm_controller.module.slurm_controller_instance",  # pylint: disable=line-too-long
-                        "name": "slurm_instance",
-                    },
+                    mgmt_filters,
                 )
                 if len(mgmt_nodes) != 1:
                     logger.warning(
@@ -551,12 +578,15 @@ class ClusterInfo:
                         node.public_ip if node.public_ip else node.internal_ip,
                     )
 
+                # Updated Filters for Login Nodes
+                login_filters = {
+                    "module": 'module.slurm_controller.module.slurm_login_instance["slurm-login"]',
+                    "type": "google_compute_instance_from_template",
+                    "name": "slurm_instance",
+                }
                 login_nodes = self._create_model_instances_from_tf_state(
                     state,
-                    {
-                        "module": 'module.slurm_controller.module.slurm_login_instance["slurm-login"]',   # pylint: disable=line-too-long
-                        "name": "slurm_instance",
-                    },
+                    login_filters,
                 )
                 if len(login_nodes) != self.cluster.num_login_nodes:
                     logger.warning(
@@ -578,6 +608,34 @@ class ClusterInfo:
                 self._configure_spack_install_loc()
 
                 self.cluster.save()
+
+                if len(login_nodes) > 0:
+                    first_login = login_nodes[0]
+                    login_ip = first_login.public_ip or first_login.internal_ip
+
+                # request guacamole health check if VDI is enabled after we know login node ip
+                if self.cluster.enable_guacamole_vdi and login_ip:
+                    try:
+                        guac_instance = GuacamoleInstance.objects.get(cluster=self.cluster)
+                    except GuacamoleInstance.DoesNotExist:
+                        guac_instance = GuacamoleInstance(
+                            cluster=self.cluster,
+                            guac_url=f"http://{login_ip}:8080/guacamole/",
+                            status="n" # new instance created here...
+                        )
+                        guac_instance.save()
+                        logger.warning("No GuacamoleInstance exists so creating it.")
+
+                    # Update the URL
+                    guac_instance.guac_url = f"http://{login_ip}:8080/guacamole/"
+                    guac_instance.save()
+                    # Sends request to c2 script to initiate the Guac' health check
+                    ack_id = c2.request_guac_health_check(
+                        self.cluster.id,
+                        login_ip,
+                        on_response=c2.guac_health_callback
+                    )
+                    logger.info("Initiated Guacamole health check (ackid=%s)", ack_id)
 
         except subprocess.CalledProcessError as err:
             # We can error during provisioning, in which case Terraform

@@ -24,6 +24,7 @@ import archspec.cpu
 import google.cloud.exceptions
 import googleapiclient.discovery
 from google.cloud import storage as gcs
+import google.cloud.secretmanager as secretmanager
 from google.cloud.billing_v1.services import cloud_catalog
 from google.oauth2 import service_account
 
@@ -777,3 +778,44 @@ def get_gcp_filestores(credentials):
     )
     result = request.execute()
     return result["instances"]
+
+
+def get_secret_value(credentials_json, project_id, secret_name):
+    """
+    Retrieve the latest secret value from Google Secret Manager.
+
+    Args:
+        credentials_json (str): JSON string of the service account credentials.
+        project_id (str): The GCP project where the secret is located.
+        secret_name (str): The name of the secret (without 'projects/...').
+
+    Returns:
+        str: The secret value (decoded to UTF-8).
+    """
+    # Parse the JSON credentials
+    creds_info = json.loads(credentials_json)
+    creds = service_account.Credentials.from_service_account_info(creds_info)
+
+    # Build the Secret Manager client
+    client = secretmanager.SecretManagerServiceClient(credentials=creds)
+
+    # Construct the resource name of the secret version to access
+    # e.g. "projects/my-gcp-project/secrets/guacamole-api-key/versions/latest"
+    secret_version_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+
+    # Access the secret
+    response = client.access_secret_version(request={"name": secret_version_path})
+
+    # Decode the secret payload
+    secret_value = response.payload.data.decode("UTF-8")
+    logger.error(f"Guac API key: {secret_value}")
+    return secret_value
+
+
+def get_guac_api_key(credentials_json, project_id, guac_instance):
+    """
+    Retrieve the Guacamole API key from Secret Manager for a given GuacamoleInstance.
+    The secret name is generated using the instance's get_secret_name() method.
+    """
+    secret_name = guac_instance.get_secret_name()
+    return get_secret_value(credentials_json, project_id, secret_name)

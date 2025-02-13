@@ -1082,6 +1082,56 @@ def cb_register_user_gcs(message, **kwargs):
         send_message("ACK", response)
 
 
+@cb_in_thread
+def cb_check_guac_health(message):
+    """
+    Check the Guacamole health from the login node (or wherever Guac is running)
+    and send an ACK message with a simple status result.
+    """
+
+    logger.info("Received request for Guacamole health check.")
+
+    ackid = message.get("ackid")
+    login_node_ip = message.get("login_node_ip")
+    response_msg = {"ackid": ackid}
+
+    if not login_node_ip:
+        logger.error("No login_node_ip provided for Guac health check")
+        response_msg["status"] = "error"
+        response_msg["message"] = "No login_node_ip provided"
+        send_message("ACK", response_msg)
+        return
+
+    guac_url = f"http://{login_node_ip}:8080/guacamole/"
+
+    healthy = False
+    attempts = 0
+    max_attempts = 50
+    while attempts < max_attempts:
+        try:
+            r = requests.get(guac_url, timeout=5)
+            if r.status_code == 200:
+                healthy = True
+                break
+        except requests.exceptions.RequestException as err:
+            logger.error("Error checking Guac health (attempt %d): %s", attempts+1, err)
+            response_msg["status"] = "unhealthy"
+            response_msg["message"] = "Guacamole not yet available. Retrying in 30 seconds."
+            send_message("UPDATE", response_msg)
+        attempts += 1
+        time.sleep(30)  # wait a bit before retrying
+
+    if healthy:
+        response_msg["status"] = "healthy"
+    else:
+        response_msg["status"] = "error"
+        response_msg["message"] = "Guacamole service not available"
+
+    # Send back the health result to the main host.
+    # UPDATE as it leaves the message in the queue since Guac isn't ready
+    send_message("UPDATE", response_msg)
+
+
 #  Other Callbacks
 
 
@@ -1139,6 +1189,7 @@ callback_map = {
     "INSTALL_APPLICATION": cb_install_app,
     "RUN_JOB": cb_run_job,
     "REGISTER_USER_GCS": cb_register_user_gcs,
+    "CHECK_GUAC": cb_check_guac_health,
 }
 
 

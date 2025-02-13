@@ -370,3 +370,71 @@ def send_update(cluster_id, comm_id, data):
 
 def register_command(command_id, callback):
     _c2_callbackMap[command_id] = callback
+
+
+def request_guac_health_check(cluster_id, login_ip, on_response=None):
+    ackid = str(uuid.uuid4())
+    data = {
+        "ackid": ackid,
+        "login_node_ip": login_ip,
+        "cluster_id": cluster_id,
+    }
+    send_command(
+        cluster_id,
+        cmd="CHECK_GUAC",
+        data=data,
+        on_response=on_response
+    )
+    return ackid
+
+
+def guac_health_callback(message, source_id=None):
+    """
+    Callback that receives the ACK from the c2daemon with a health status.
+    Expected message keys include:
+      - "cluster_id": the ID of the cluster,
+      - "status": one of "healthy", "unhealthy", or "error",
+      - (optionally) "message": additional info.
+    """
+    from ..models import GuacamoleInstance  # Import locally so models are available
+    cluster_id = message.get("cluster_id")
+    if not cluster_id:
+        logger.error("No cluster_id provided in the Guac health ACK")
+        return
+
+    try:
+        instance = GuacamoleInstance.objects.get(cluster__id=cluster_id)
+        current_status = instance.status
+        ack_status = message.get("status", "")
+
+        # Example state transitions:
+        # - If health check returns healthy, update to "r" (ready)
+        # - If it returns unhealthy or error and the instance was new ("n") or initializing ("i"),
+        #   then leave it as "i" 
+        # - If health check returns unhealthy and the instance was previously healthy then change
+        #   the status to ""
+        if ack_status == "healthy":
+            new_status = "r"
+        elif ack_status in ("unhealthy", "error"):
+            # Indicates Guac was previously healthy then something broke so give an error.
+            if current_status == "r":
+                logger.info("Guacamole deployment has errored out.")
+                new_status = "e"
+            # If it isn't "r"eady and hasn't errored it must be "i"nitialising still.
+            else:
+                new_status = "i"
+        else:
+            logger.warning("Guac health callback: unknown status '%s'", ack_status)
+            new_status = current_status
+
+        # This bit checks if the status has changed.
+        if new_status != current_status:
+            instance.status = new_status
+            instance.save()
+            logger.info("Guacamole instance for cluster %s updated from '%s' to '%s'",
+                        cluster_id, current_status, new_status)
+        else:
+            logger.info("Guacamole instance for cluster %s remains at status '%s'",
+                        cluster_id, current_status)
+    except GuacamoleInstance.DoesNotExist:
+        logger.error("Guacamole instance not found for cluster %s", cluster_id)

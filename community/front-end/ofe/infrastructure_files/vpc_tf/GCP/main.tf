@@ -53,7 +53,11 @@ resource "google_compute_router_nat" "network_nat" {
   }
 }
 
-
+resource "google_compute_vpn_gateway" "host_vpn" {
+  name    = "central-vpn-gw"
+  network = google_compute_network.network.name
+  region  = var.region
+}
 
 # Firewalls - allow all internal, allow ssh from external
 

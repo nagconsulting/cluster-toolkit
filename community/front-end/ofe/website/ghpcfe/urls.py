@@ -493,6 +493,11 @@ urlpatterns += [
         BackendListRegions.as_view(),
         name="backend-list-regions",
     ),
+    path(
+        "backend/vdi-get-password/<int:pk>/",
+        VDIGetPasswordView.as_view(),
+        name="vdi-get-password"
+    ),
 ]
 
 # Url paths that handle custom image views

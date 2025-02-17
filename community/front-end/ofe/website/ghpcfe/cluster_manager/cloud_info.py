@@ -800,7 +800,7 @@ def get_secret_value(credentials_json, project_id, secret_name):
     client = secretmanager.SecretManagerServiceClient(credentials=creds)
 
     # Construct the resource name of the secret version to access
-    # e.g. "projects/my-gcp-project/secrets/guacamole-api-key/versions/latest"
+    # e.g. "projects/my-gcp-project/secrets/guacamole-auth-token/versions/latest"
     secret_version_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
 
     # Access the secret
@@ -808,14 +808,29 @@ def get_secret_value(credentials_json, project_id, secret_name):
 
     # Decode the secret payload
     secret_value = response.payload.data.decode("UTF-8")
-    logger.error(f"Guac API key: {secret_value}")
+
     return secret_value
 
 
-def get_guac_api_key(credentials_json, project_id, guac_instance):
+def get_guac_auth_token(credentials_json, project_id, guac_instance):
     """
     Retrieve the Guacamole API key from Secret Manager for a given GuacamoleInstance.
-    The secret name is generated using the instance's get_secret_name() method.
     """
-    secret_name = guac_instance.get_secret_name()
+    secret_name = guac_instance.get_auth_token_secret_name()
+    return get_secret_value(credentials_json, project_id, secret_name)
+
+
+def get_vnc_server_password(credentials_json, project_id, guac_instance):
+    """
+    Retrieve the password for the VNC server from Secret Manager.
+    """
+    secret_name = guac_instance.get_vnc_server_secret_name()
+    return get_secret_value(credentials_json, project_id, secret_name)
+
+
+def get_vnc_user_password(credentials_json, project_id, guac_instance):
+    """
+    Retrieve the password for the VNC user from Secret Manager.
+    """
+    secret_name = guac_instance.get_vnc_user_secret_name()
     return get_secret_value(credentials_json, project_id, secret_name)

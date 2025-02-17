@@ -1,9 +1,15 @@
 {% extends "base_generic.html" %}
+
+{% block meta %}
+  {% if loading == 1 %}
+  <meta http-equiv="refresh" content="15" />
+  {% endif %}
+{% endblock %}
+
 {% load static %}
 
 {% block content %}
-<h2>VDI Instances</h2>
-<hr>
+<h2>Virtual Desktop Instances</h2>
 
 {% if vdi_list %}
 <table class="table">
@@ -13,6 +19,7 @@
       <th>Cluster</th>
       <th>VDI Type</th>
       <th>Status</th>
+      <th>VNC Password</th>
       <th>Actions</th>
     </tr>
   </thead>
@@ -40,10 +47,25 @@
         {% if vdi.status == "n" %}
         <img src="/static/img/status-configured.png" style="width:30px;height:32px;">
         {% endif %}
+        {% if vdi.status == "d" %}
+        <img src="/static/img/status-deleted.png" style="width:30px;height:32px;">
+        {% endif %}
         {{ vdi.get_status_display }}
       </td>
       <td>
-        {% if vdi.vdi_type_name == "GuacamoleInstance" %}
+        {% if vdi.status == "r" %}
+          <span id="vnc-user-password-{{ vdi.id }}" style="display: none;" data-loaded="false"></span>
+          <button type="button"
+                  class="btn btn-sm btn-primary"
+                  onclick="togglePassword('vnc-user-password-{{ vdi.id }}', this)"
+                  data-instance-id="{{ vdi.id }}"
+                  data-password-type="vnc_server">
+            Show Password
+          </button>
+        {% endif %}
+      </td>
+      <td>
+        {% if vdi.vdi_type_name == "Guacamole" and vdi.status == "r" %}
           <a href="{{ vdi.guac_url }}" target="_blank" class="btn btn-sm btn-primary">
             Open Guacamole
           </a>
@@ -54,7 +76,66 @@
   </tbody>
 </table>
 {% else %}
+<hr>
 <p>No VDI instances found. You can create one when you deploy a cluster.</p>
 {% endif %}
 
+{% endblock %}
+
+{% block tailscript %}
+<script>
+  function togglePassword(spanId, btn) {
+    var span = document.getElementById(spanId);
+    if (!span) {
+      console.error("Element with id " + spanId + " not found.");
+      return;
+    }
+
+    // Log the password for debugging (remove in production)
+    console.log("Password for element " + spanId + ": " + span.innerText);
+
+    // Check if we have already loaded the password
+    if (span.getAttribute("data-loaded") === "false") {
+      // Get instance id and password type from the button's data attributes
+      var instanceId = btn.getAttribute("data-instance-id");
+      var passwordType = btn.getAttribute("data-password-type");
+      
+      // Use jQuery AJAX to fetch the password from the backend
+      $.ajax({
+        url: "/backend/vdi-get-password/" + instanceId + "/",
+        data: { type: passwordType },
+        method: "GET",
+        success: function(response) {
+          if (response.password) {
+            // Insert the fetched password into the span
+            span.textContent = response.password;
+            span.setAttribute("data-loaded", "true");
+            // Now toggle display as usual
+            toggleDisplay(span, btn);
+          } else {
+            span.textContent = "Error: No password returned";
+          }
+        },
+        error: function(xhr, status, error) {
+          console.error("Error fetching password: ", error);
+          span.textContent = "Error fetching password";
+        }
+      });
+    } else {
+      // If already loaded, just toggle the display
+      toggleDisplay(span, btn);
+    }
+  }
+
+  // A helper function to toggle the span's display
+  function toggleDisplay(span, btn) {
+    if (span.style.display === "none") {
+      span.style.display = "inline";
+      btn.innerText = "Hide Password";
+    } else {
+      span.style.display = "none";
+      btn.innerText = "Show Password";
+    }
+  }
+</script>
 {% endblock %}

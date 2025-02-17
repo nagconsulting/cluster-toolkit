@@ -669,6 +669,13 @@ class ClusterInfo:
             self.cluster = Cluster.objects.get(id=self.cluster.id)
 
             self.cluster.status = "d"
+
+            # Set the Guac' instance as "d" too if it exists
+            if self.cluster.enable_guacamole_vdi:
+                guac_instance = GuacamoleInstance.objects.get(cluster=self.cluster)
+                guac_instance.status = "d"
+                guac_instance.save()
+
             self.cluster.cloud_state = "xm"
             self.cluster.save()
 

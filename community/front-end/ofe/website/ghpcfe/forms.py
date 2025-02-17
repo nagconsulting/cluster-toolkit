@@ -1127,4 +1127,4 @@ class ImageImportForm(forms.ModelForm):
 class GuacamoleInstanceForm(forms.ModelForm):
     class Meta:
         model = GuacamoleInstance
-        fields = ["guac_url", "api_key", "status"]
+        fields = ["guac_url", "auth_token", "status"]

@@ -1706,9 +1706,9 @@ class GuacamoleInstance(VDIInstance):
         help_text="Base URL for the Guac server (<login-node-ip>:8080)"
     )
 
-    api_key = models.CharField(
+    auth_token = models.CharField(
         max_length=512,
-        help_text="API key for authentication"
+        help_text="Auth token for authentication"
     )
 
     GUACAMOLE_STATUS = (
@@ -1716,6 +1716,7 @@ class GuacamoleInstance(VDIInstance):
         ("i", "Guacamole instance setup process has started"),
         ("r", "Guacamole instance is available"),
         ("e", "Guacamole instance deployment failed"),
+        ("d", "Guacamole instance has been deleted"),
     )
 
     status = models.CharField(
@@ -1725,8 +1726,15 @@ class GuacamoleInstance(VDIInstance):
         help_text="Status of this Guacamole instance",
     )
 
-    def get_secret_name(self):
-        return f"guacamole-api-key-{self.name}-{self.id}"
+    # guac_id Change cluster.id to use Guac id for multiple login nodes?
+    def get_auth_token_secret_name(self):
+        return f"guacamole-auth-token-{self.cluster.name}-{self.cluster.id}"
+
+    def get_vnc_server_secret_name(self):
+        return f"vnc-server-password-{self.cluster.name}-{self.cluster.id}"
+
+    def get_vnc_user_secret_name(self):
+        return f"vnc-user-password-{self.cluster.name}-{self.cluster.id}"
 
     def __str__(self):
         return f"Guacamole VDI for {self.cluster.name}"

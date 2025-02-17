@@ -1,4 +1,6 @@
 ---
+# Tasks tagged with 'renew_guac_token' are aimed to run when the cron
+# job runs so that the VDI access token is kept fresh.
 
 # 1. Install requirements for gcloud Ansible and handle secrets
 - name: Get default Python interpreter from update-alternatives
@@ -26,6 +28,11 @@
     name:
       - requests
       - passlib
+    state: present
+
+- name: Ensure jq is present
+  package:
+    name: jq
     state: present
 
 - name: Get project ID from metadata
@@ -70,6 +77,7 @@
     database_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
 - name: Add generated database password to Secret Manager
   google.cloud.gcp_secret_manager:
+    # Change this to Guac id for multiple login nodes?
     name: "vnc-db-password-{{ cluster_name }}-{{ cluster_id }}"
     auth_kind: machineaccount
     state: present
@@ -204,6 +212,15 @@
       until: guac_health.status == 200
       retries: 10
       delay: 3
+    - name: Delete any existing auth tokens from previous runs
+      google.cloud.gcp_secret_manager:
+        name: "guacamole-auth-token-{{ cluster_name }}-{{ cluster_id }}"
+        version: all
+        state: absent
+        auth_kind: machineaccount
+        project: "{{ gcp_project_id }}"
+      tags:
+        - renew_guac_token
     - name: Obtain auth token from Guacamole
       uri:
         url: "http://localhost:8080/guacamole/api/tokens"
@@ -214,19 +231,61 @@
           password: "guacadmin"
         return_content: yes
       register: guac_api_response
+      tags:
+        - renew_guac_token
     - name: Set a fact to store only the auth token string
       set_fact:
-        guac_api_key: "{{ guac_api_response.json.authToken }}"
-    - name: Save Guacamole API key to Secret Manager
+        guac_auth_token: "{{ guac_api_response.json.authToken }}"
+      tags:
+        - renew_guac_token
+    - name: Save Guacamole auth token to Secret Manager
       google.cloud.gcp_secret_manager:
-        name: "guacamole-api-key-{{ cluster_name }}-{{ cluster_id }}"
+        name: "guacamole-auth-token-{{ cluster_name }}-{{ cluster_id }}"
         state: present
         auth_kind: machineaccount
-        value: "{{ guac_api_key }}"
+        value: "{{ guac_auth_token }}"
         project: "{{ gcp_project_id }}"
       register: guac_secret
+      tags:
+        - renew_guac_token
+
+    - name: Copy the renew_guac_token_playbook.sh script to the target host
+      copy:
+        src: renew_guac_token.sh
+        dest: /usr/local/bin/renew_guac_token.sh
+        mode: '0755'
+        owner: root
+        group: root
+
+    # NOT 2 hours - testing
+    - name: Create cron job to run the Ansible playbook for token renewal every 2 hours
+      cron:
+        name: "Renew Guacamole access token via playbook"
+        minute: "*/10"
+        #minute: "0"
+        #hour: "*/2"
+        job: "/usr/local/bin/renew_guac_token.sh"
+        user: root
 
   when: enable_guacamole_vdi | default(false) | bool
+
+
+    # - name: Set a cron job to retrieve a new API key then update access token secret
+    #   cron:
+    #     name: "Renew Guacamole access token"
+    #     minute: "0"
+    #     hour: "*/2"
+    #     job: >-
+    #       /bin/bash -c 'NEW_TOKEN=$(curl -s -X POST
+    #       -d "username={{ guacamole_admin_user }}"
+    #       -d "password=guacadmin" http://localhost:8080/guacamole/api/tokens | jq -r ".authToken")
+    #       && /usr/bin/gcloud secrets versions add
+    #       guacamole-auth-token-{{ cluster_name }}-{{ cluster_id }}
+    #       --data="$NEW_TOKEN"
+    #       --project="{{ gcp_project_id }}"'
+    #     user: root
+
+
 
 
 # 3. Configure VNC server

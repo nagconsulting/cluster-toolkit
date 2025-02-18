@@ -4,7 +4,7 @@
 # This script runs the login.yaml playbook with only the token renewal tasks.
 
 PLAYBOOK_PATH="/tmp/ansible_setup/login.yaml"
-INVENTORY="localhost,"
-EXTRA_ARGS="--connection=local"
+EXTRA_ARGS="-e @/tmp/ansible_setup/vars.yaml"
 
-ansible-playbook "$PLAYBOOK_PATH" --tags renew_guac_token --inventory "$INVENTORY" $EXTRA_ARGS
+cd /tmp/ansible_setup/ || exit 1
+ansible-playbook "$PLAYBOOK_PATH" --tags renew_guac_token $EXTRA_ARGS

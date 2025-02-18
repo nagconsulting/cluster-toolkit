@@ -59,7 +59,7 @@
                   class="btn btn-sm btn-primary"
                   onclick="togglePassword('vnc-user-password-{{ vdi.id }}', this)"
                   data-instance-id="{{ vdi.id }}"
-                  data-password-type="vnc_server">
+                  data-password-type="vnc_user">
             Show Password
           </button>
         {% endif %}
@@ -91,8 +91,8 @@
       return;
     }
 
-    // Log the password for debugging (remove in production)
-    console.log("Password for element " + spanId + ": " + span.innerText);
+    // Log the password for debugging
+    // console.log("Password for element " + spanId + ": " + span.innerText);
 
     // Check if we have already loaded the password
     if (span.getAttribute("data-loaded") === "false") {

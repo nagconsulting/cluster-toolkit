@@ -29,7 +29,8 @@ locals {
     "monitoring.metricWriter",
     "cloudtrace.agent",
     "pubsub.admin",
-    "secretmanager.admin"
+    "secretmanager.admin",
+    "compute.networkAdmin"
   ]
 
   deploy_key1 = var.deployment_key != "" ? filebase64(var.deployment_key) : ""
@@ -151,6 +152,7 @@ resource "google_compute_instance" "server_vm" {
     ghpcfe-c2-topic         = module.pubsub.topic,
     hostname                = var.webserver_hostname
     deploy_mode             = var.deployment_mode
+    host_vpc_name           = module.network[0].vpc_name
   }
 
   service_account {
@@ -162,7 +164,8 @@ resource "google_compute_instance" "server_vm" {
       "trace",
       "service-control",
       "service-management",
-      "pubsub"
+      "pubsub",
+      "compute-rw"
     ]
   }
   scheduling {

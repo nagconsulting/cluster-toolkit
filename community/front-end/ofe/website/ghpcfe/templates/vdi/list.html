@@ -54,21 +54,46 @@
       </td>
       <td>
         {% if vdi.status == "r" %}
-          <span id="vnc-user-password-{{ vdi.id }}" style="display: none;" data-loaded="false"></span>
-          <button type="button"
-                  class="btn btn-sm btn-primary"
-                  onclick="togglePassword('vnc-user-password-{{ vdi.id }}', this)"
-                  data-instance-id="{{ vdi.id }}"
-                  data-password-type="vnc_user">
-            Show Password
-          </button>
+          <span id="vnc-user-password-{{ vdi.id }}"
+                style="display: none;"
+                data-loaded="false">
+          </span>
+      
+          <div class="btn-group" role="group">
+            <button type="button"
+                    class="btn btn-outline-secondary"
+                    id="eye-button-{{ vdi.id }}"
+                    onclick="togglePassword('vnc-user-password-{{ vdi.id }}', this)"
+                    data-instance-id="{{ vdi.id }}"
+                    data-password-type="vdi_user"
+                    title="Show/Hide Password">
+              <i class="bi bi-eye"></i>
+            </button>
+      
+            <button type="button"
+                    class="btn btn-outline-secondary password-display invisible"
+                    id="password-button-{{ vdi.id }}"
+                    style="min-width: 6rem;">
+            </button>
+          </div>
         {% endif %}
-      </td>
+      </td>             
       <td>
         {% if vdi.vdi_type_name == "Guacamole" and vdi.status == "r" %}
-          <a href="{{ vdi.guac_url }}" target="_blank" class="btn btn-sm btn-primary">
-            Open Guacamole
-          </a>
+        <div class="dropdown">
+          <button class="btn btn-outline-secondary dropdown-toggle"
+                  type="button"
+                  id="connectDropdown"
+                  data-toggle="dropdown"
+                  aria-haspopup="true"
+                  aria-expanded="false">
+            Connect
+          </button>
+          <div class="dropdown-menu dropdown-menu-right" aria-labelledby="connectDropdown">
+            <a class="dropdown-item" href="#" onclick="loginGuac('{{ vdi.id }}', '1'); return false;">VDI Connection</a>
+            <a class="dropdown-item" href="#" onclick="loginGuac('{{ vdi.id }}', '2'); return false;">SSH Connection</a>
+          </div>
+        </div>
         {% endif %}
       </td>
     </tr>
@@ -84,58 +109,114 @@
 
 {% block tailscript %}
 <script>
-  function togglePassword(spanId, btn) {
+  // 1) Helper function to retrieve password from server
+  function retrieveCredential(identifier, credentialType, callback) {
+    $.ajax({
+      url: "/backend/vdi-get-password/" + identifier + "/",
+      data: { type: credentialType },
+      method: "GET",
+      success: function(response) {
+        if (response.password) {
+          callback(null, response.password);
+        } else {
+          callback("No credential returned");
+        }
+      },
+      error: function(xhr, status, error) {
+        callback(error);
+      }
+    });
+  }
+
+  // 2) Toggle the password display, loading it if needed
+  function togglePassword(spanId, eyeBtn) {
     var span = document.getElementById(spanId);
     if (!span) {
       console.error("Element with id " + spanId + " not found.");
       return;
     }
 
-    // Log the password for debugging
-    // console.log("Password for element " + spanId + ": " + span.innerText);
+    var instanceId = eyeBtn.getAttribute("data-instance-id");
+    var passwordType = eyeBtn.getAttribute("data-password-type");
+    var passwordBtn = document.getElementById("password-button-" + instanceId);
 
-    // Check if we have already loaded the password
+    if (!passwordBtn) {
+      console.error("Password button for instance " + instanceId + " not found.");
+      return;
+    }
+
+    // Helper: Toggle the Bootstrap Icons for eye vs. eye-slash
+    function toggleEyeIcon(button) {
+      var icon = button.querySelector("i");
+      if (!icon) return;
+      if (icon.classList.contains("bi-eye")) {
+        icon.classList.remove("bi-eye");
+        icon.classList.add("bi-eye-slash");
+      } else {
+        icon.classList.remove("bi-eye-slash");
+        icon.classList.add("bi-eye");
+      }
+    }
+
+    // If password is not loaded yet, fetch it via AJAX
     if (span.getAttribute("data-loaded") === "false") {
-      // Get instance id and password type from the button's data attributes
-      var instanceId = btn.getAttribute("data-instance-id");
-      var passwordType = btn.getAttribute("data-password-type");
-      
-      // Use jQuery AJAX to fetch the password from the backend
-      $.ajax({
-        url: "/backend/vdi-get-password/" + instanceId + "/",
-        data: { type: passwordType },
-        method: "GET",
-        success: function(response) {
-          if (response.password) {
-            // Insert the fetched password into the span
-            span.textContent = response.password;
-            span.setAttribute("data-loaded", "true");
-            // Now toggle display as usual
-            toggleDisplay(span, btn);
-          } else {
-            span.textContent = "Error: No password returned";
-          }
-        },
-        error: function(xhr, status, error) {
-          console.error("Error fetching password: ", error);
-          span.textContent = "Error fetching password";
+      retrieveCredential(instanceId, passwordType, function(err, password) {
+        if (err) {
+          console.error(err);
+          span.textContent = "Error: " + err;
+        } else {
+          // Store the password in the span
+          span.textContent = password;
+          span.setAttribute("data-loaded", "true");
+
+          // Also place the password in the second button's text
+          passwordBtn.textContent = password;
+          
+          // Remove .invisible to show the password text
+          passwordBtn.classList.remove("invisible");
+
+          // Switch the eye icon to "eye-slash"
+          toggleEyeIcon(eyeBtn);
         }
       });
     } else {
-      // If already loaded, just toggle the display
-      toggleDisplay(span, btn);
+      // Password is already loaded; just toggle visibility
+      if (passwordBtn.classList.contains("invisible")) {
+        // Show the password
+        passwordBtn.classList.remove("invisible");
+      } else {
+        // Hide the password
+        passwordBtn.classList.add("invisible");
+      }
+
+      // Toggle the eye icon
+      toggleEyeIcon(eyeBtn);
     }
   }
 
-  // A helper function to toggle the span's display
-  function toggleDisplay(span, btn) {
-    if (span.style.display === "none") {
-      span.style.display = "inline";
-      btn.innerText = "Hide Password";
-    } else {
-      span.style.display = "none";
-      btn.innerText = "Show Password";
-    }
+  // 3) Example Guacamole login function (unchanged)
+  function loginGuac(instanceId, connectionId) {
+    $.ajax({
+      url: "/backend/vdi-get-password/" + instanceId + "/",
+      data: { type: "guac_password", conn: connectionId },
+      method: "GET",
+      success: function(response) {
+        if (response.password && response.connection_string) {
+          var guacUrl = `/guacamole/${instanceId}/#/client/${response.connection_string}/?username=guacadmin&password=${response.password}`;
+          window.open(
+            guacUrl, 
+            "GuacWindow", 
+            "toolbar=no,location=no,directories=no,status=no,menubar=no,scrollbars=no,resizable=yes,width=1920,height=1080"
+          );
+        } else {
+          alert("Error: Missing required login parameters.");
+        }
+      },
+      error: function(xhr, status, error) {
+        console.error("Error fetching Guacamole login details:", error);
+        alert("Error fetching Guacamole login details");
+      }
+    });
   }
 </script>
 {% endblock %}

@@ -33,6 +33,7 @@ from website.settings import SITE_NAME
 from . import c2
 from . import cloud_info
 from . import utils
+from . import vdi
 
 from .. import grafana
 from ..models import Cluster, ApplicationInstallationLocation, ComputeInstance, GuacamoleInstance
@@ -615,20 +616,47 @@ class ClusterInfo:
 
                 # request guacamole health check if VDI is enabled after we know login node ip
                 if self.cluster.enable_guacamole_vdi and login_ip:
+                    vpc_obj = self.cluster.subnet.vpc
+                    if not vpc_obj.peering_established:
+                        # Gather the Django/host VPC info from config
+                        ofe_project = self.config["server"]["gcp_project"]
+                        ofe_vpc_name = self.config["server"]["host_vpc_name"]
+
+                        # Gather the cluster VPC info from the model
+                        cluster_project = self.cluster.project_id
+                        cluster_vpc_name = vpc_obj.cloud_id
+
+                        logger.info("Creating new VPC peering from FE=%s to cluster=%s",
+                                    ofe_vpc_name, cluster_vpc_name)
+                        # Read the same creds used for provisioning
+                        creds = self._get_credentials_file().read_text()
+
+                        # Establish the 2-way peering
+                        cloud_info.ensure_vpc_peering(
+                            credentials_json=creds,
+                            ofe_project=ofe_project,
+                            ofe_vpc_name=ofe_vpc_name,
+                            cluster_project=cluster_project,
+                            cluster_vpc_name=cluster_vpc_name
+                        )
+
+                        # Mark as established so this can be skipped next time
+                        vpc_obj.peering_established = True
+                        vpc_obj.save()
+                    else:
+                        logger.info("VPC peering is already established, skipping.")
+
                     try:
                         guac_instance = GuacamoleInstance.objects.get(cluster=self.cluster)
                     except GuacamoleInstance.DoesNotExist:
                         guac_instance = GuacamoleInstance(
                             cluster=self.cluster,
-                            guac_url=f"http://{login_ip}:8080/guacamole/",
+                            guac_url=f"http://{login_ip}:8080/guacamole",
                             status="n" # new instance created here...
                         )
                         guac_instance.save()
                         logger.warning("No GuacamoleInstance exists so creating it.")
 
-                    # Update the URL
-                    guac_instance.guac_url = f"http://{login_ip}:8080/guacamole/"
-                    guac_instance.save()
                     # Sends request to c2 script to initiate the Guac' health check
                     ack_id = c2.request_guac_health_check(
                         self.cluster.id,
@@ -636,6 +664,17 @@ class ClusterInfo:
                         on_response=c2.guac_health_callback
                     )
                     logger.info("Initiated Guacamole health check (ackid=%s)", ack_id)
+
+                    # Set the name of the entry in the Nginx mapping block here:
+                    self.guac_instance = guac_instance
+                    instance_name = f"{self.guac_instance.id}"
+
+                    logger.info("Adding host entry to NGINX conf: %s %s", instance_name, login_ip)
+                    vdi.add_guac_instance(instance_name, login_ip)
+
+                    # Update the URL and save the Guac instance
+                    guac_instance.guac_url = f"http://{login_ip}:8080/guacamole"
+                    guac_instance.save()
 
         except subprocess.CalledProcessError as err:
             # We can error during provisioning, in which case Terraform
@@ -658,6 +697,44 @@ class ClusterInfo:
             self.cluster.cloud_state = "dm"
             self.cluster.save()
 
+            if self.cluster.enable_guacamole_vdi:
+                vpc_obj = self.cluster.subnet.vpc
+                if vpc_obj.peering_established:
+                    # Gather the Django/host VPC info from config
+                    ofe_project = self.config["server"]["gcp_project"]
+                    ofe_vpc_name = self.config["server"]["host_vpc_name"]
+
+                    # Gather the cluster VPC info from the model
+                    cluster_project = self.cluster.project_id
+                    cluster_vpc_name = vpc_obj.cloud_id
+
+                    logger.info("Removing VPC peering from FE=%s to cluster=%s",
+                                ofe_vpc_name, cluster_vpc_name)
+                    # Read the same creds used for provisioning
+                    creds = self._get_credentials_file().read_text()
+
+                    # Remove the 2-way peering
+                    cloud_info.remove_vpc_peering(
+                        credentials_json=creds,
+                        ofe_project=ofe_project,
+                        ofe_vpc_name=ofe_vpc_name,
+                        cluster_project=cluster_project,
+                        cluster_vpc_name=cluster_vpc_name
+                    )
+
+                    # Mark as established so this can be skipped next time
+                    vpc_obj.peering_established = False
+                    vpc_obj.save()
+                else:
+                    logger.info("VPC peering not configured, skipping.")
+
+                # Set the Guac' instance as "d"eleted
+                guac_instance = GuacamoleInstance.objects.get(cluster=self.cluster)
+                guac_instance.status = "d"
+                guac_instance.save()
+                # Remove the Guac instance from Nginx reverse proxy mapping
+                vdi.remove_guac_instance(str(guac_instance.id))
+
             utils.run_terraform(terraform_dir, "destroy", extra_env=extra_env)
 
             controller_sa = self.cluster.controller_node.service_account
@@ -669,12 +746,6 @@ class ClusterInfo:
             self.cluster = Cluster.objects.get(id=self.cluster.id)
 
             self.cluster.status = "d"
-
-            # Set the Guac' instance as "d" too if it exists
-            if self.cluster.enable_guacamole_vdi:
-                guac_instance = GuacamoleInstance.objects.get(cluster=self.cluster)
-                guac_instance.status = "d"
-                guac_instance.save()
 
             self.cluster.cloud_state = "xm"
             self.cluster.save()

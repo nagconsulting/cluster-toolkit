@@ -18,3 +18,8 @@ output "subnet_name" {
   value       = google_compute_subnetwork.hosting_subnetwork.name
   description = "Name of the generated subnet"
 }
+
+output "vpc_name" {
+  description = "The name of the hosting VPC."
+  value       = google_compute_network.hosting_vpc.name
+}

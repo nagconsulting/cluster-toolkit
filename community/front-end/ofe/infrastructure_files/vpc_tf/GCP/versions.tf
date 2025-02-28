@@ -20,9 +20,10 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 3.54"
     }
+    # 6.21.0 has no amd64 release as of Feb 19 2025.
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = ">= 3.83"
+      version = "6.20.0"
     }
     random = {
       source  = "hashicorp/random"

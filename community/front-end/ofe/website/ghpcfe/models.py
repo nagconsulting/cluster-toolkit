@@ -335,6 +335,14 @@ class VirtualNetwork(CloudResource):
         ],
     )
 
+    peering_established = models.BooleanField(
+        default=False,
+        help_text=(
+            "If True, we have already established VPC Peering with "
+            "the frontend VPC."
+        )
+    )
+
     def __str__(self):
         return self.name
 
@@ -808,7 +816,10 @@ class Cluster(CloudResource):
         ),
     )
     enable_guacamole_vdi = models.BooleanField(
-        default=False, help_text="Deploy a containerized Guacamole VDI instance on the cluster login node?"
+        default=False,
+        help_text="""Deploy containerized Guacamole VDI instance on the login node?
+        *** Uses VPC Peering. CIDR overlap not supported between VPCs ***
+        """
     )
 
     def get_access_key(self):
@@ -1677,6 +1688,21 @@ VDI_LABELS = {
 class VDIInstance(models.Model):
     """Abstract base model for VDI instances"""
 
+    VDI_STATUS = (
+        ("n", "VDI instance setup process will start soon"),
+        ("i", "VDI instance setup process has started"),
+        ("r", "VDI instance is available"),
+        ("e", "VDI instance deployment failed"),
+        ("d", "VDI instance has been deleted"),
+    )
+
+    status = models.CharField(
+        max_length=2,
+        choices=VDI_STATUS,
+        default="n",
+        help_text="Status of this Guacamole instance",
+    )
+
     cluster = models.OneToOneField(
         Cluster,
         on_delete=models.CASCADE,
@@ -1703,7 +1729,7 @@ class GuacamoleInstance(VDIInstance):
     """Guacamole-specific VDI instance"""
 
     guac_url = models.URLField(
-        help_text="Base URL for the Guac server (<login-node-ip>:8080)"
+        help_text="Base internal URL for the Guac server (<login-node-ip>:8080/guacamole)"
     )
 
     auth_token = models.CharField(
@@ -1726,15 +1752,30 @@ class GuacamoleInstance(VDIInstance):
         help_text="Status of this Guacamole instance",
     )
 
-    # guac_id Change cluster.id to use Guac id for multiple login nodes?
-    def get_auth_token_secret_name(self):
-        return f"guacamole-auth-token-{self.cluster.name}-{self.cluster.id}"
+    def generate_guacamole_connection_string(self, connection_id="1"):
+        """
+        Generates a base64-encoded connection string for Guacamole.
+        Format: "{connection_id}\0{connection_type}\0{data_source}"
+        """
+        connection_type = "c"  # c = connection, g = group
+        data_source = "postgresql"
+        # Create connection string using the passed connection_id
+        conn_string = f"{connection_id}\0{connection_type}\0{data_source}"
+        # Encode in base64
+        encoded_string = base64.b64encode(conn_string.encode()).decode()
+        return encoded_string
+
+    def get_guac_server_secret_name(self):
+        return f"guacamole-server-password-{self.cluster.name}-{self.cluster.id}"
 
     def get_vnc_server_secret_name(self):
         return f"vnc-server-password-{self.cluster.name}-{self.cluster.id}"
 
-    def get_vnc_user_secret_name(self):
+    def get_vdi_user_secret_name(self):
         return f"vnc-user-password-{self.cluster.name}-{self.cluster.id}"
+
+    def get_guac_password_secret_name(self):
+        return f"guacamole-server-password-{self.cluster.name}-{self.cluster.id}"
 
     def __str__(self):
         return f"Guacamole VDI for {self.cluster.name}"

@@ -32,13 +32,21 @@ SERVER_HOSTNAME=$(curl --silent --fail http://metadata/computeMetadata/v1/instan
 config_bucket=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/webserver-config-bucket -H "Metadata-Flavor: Google")
 c2_topic=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/ghpcfe-c2-topic -H "Metadata-Flavor: Google")
 deploy_mode=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/deploy_mode -H "Metadata-Flavor: Google")
-
+host_vpc_name=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/host_vpc_name -H "Metadata-Flavor: Google")
 # Exit if deployment already exists to stop startup script running on reboots
 #
 if [[ -d /opt/gcluster/cluster-toolkit ]]; then
 	printf "It appears gcluster has already been deployed. Exiting...\n"
 	exit 0
 fi
+
+# Create a sudoers file for the gcluster user to allow reloading gcluster service without a password.
+SUDOERS_FILE="/etc/sudoers.d/gcluster_reload"
+cat <<'EOF' > "${SUDOERS_FILE}"
+gcluster ALL=(root) NOPASSWD: /bin/systemctl reload gcluster
+EOF
+# Set the correct permissions
+chmod 0440 "${SUDOERS_FILE}"
 
 printf "\n############## Setting SELinux to Permissive ###############\n"
 setenforce 0
@@ -205,6 +213,7 @@ sudo su - gcluster -c /bin/bash <<EOF
   echo "    gcp_project: \"$GCP_PROJECT\"" >> configuration.yaml
   echo "    gcs_bucket: \"${config_bucket}\"" >> configuration.yaml
   echo "    c2_topic: \"${c2_topic}\"" >> configuration.yaml
+  echo "    host_vpc_name: \"${host_vpc_name}\"" >> configuration.yaml
 
   printf "\nInitalising Django environments...\n"
   mkdir /opt/gcluster/run
@@ -265,6 +274,7 @@ After=supervisord.service grafana-server.service
 Type=forking
 ExecStart=/usr/sbin/nginx -p /opt/gcluster/run/ -c /opt/gcluster/cluster-toolkit/community/front-end/ofe/website/nginx.conf
 ExecStop=/usr/sbin/nginx -p /opt/gcluster/run/ -c /opt/gcluster/cluster-toolkit/community/front-end/ofe/website/nginx.conf -s stop
+ExecReload=/usr/sbin/nginx -p /opt/gcluster/run -c /opt/gcluster/cluster-toolkit/community/front-end/ofe/website/nginx.conf -s reload
 PIDFile=/opt/gcluster/run/nginx.pid
 Restart=no
 

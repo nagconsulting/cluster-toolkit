@@ -17,6 +17,7 @@
 import json
 import logging
 import time
+import requests
 from collections import defaultdict
 from functools import lru_cache
 
@@ -814,10 +815,26 @@ def get_secret_value(credentials_json, project_id, secret_name):
 
 def get_guac_auth_token(credentials_json, project_id, guac_instance):
     """
-    Retrieve the Guacamole API key from Secret Manager for a given GuacamoleInstance.
+    Build the secret name and retrieve the secret for Guac server login.
     """
-    secret_name = guac_instance.get_auth_token_secret_name()
-    return get_secret_value(credentials_json, project_id, secret_name)
+    secret_name = guac_instance.get_guac_server_secret_name()
+    password = get_secret_value(credentials_json, project_id, secret_name)
+    
+    logger.info(guac_instance.guac_url)
+
+    logger.info(password)
+
+    # Use username and password to request the auth token
+    response = requests.post(
+        f"{guac_instance.guac_url}/api/tokens",
+        data={
+            "username": "guacadmin",
+            "password": password,
+        },
+    )
+    if response.status_code != 200:
+        raise Exception("Could not retrieve token.")
+    return response.json().get("authToken")
 
 
 def get_vnc_server_password(credentials_json, project_id, guac_instance):
@@ -828,9 +845,221 @@ def get_vnc_server_password(credentials_json, project_id, guac_instance):
     return get_secret_value(credentials_json, project_id, secret_name)
 
 
-def get_vnc_user_password(credentials_json, project_id, guac_instance):
+def get_vdi_user_password(credentials_json, project_id, guac_instance):
     """
     Retrieve the password for the VNC user from Secret Manager.
     """
-    secret_name = guac_instance.get_vnc_user_secret_name()
+    secret_name = guac_instance.get_vdi_user_secret_name()
     return get_secret_value(credentials_json, project_id, secret_name)
+
+
+def get_guac_admin_password(credentials_json, project_id, guac_instance):
+    """
+    Retrieve the password for the Guacamole 'guacadmin' user.
+    """
+    secret_name = guac_instance.get_guac_password_secret_name()
+    return get_secret_value(credentials_json, project_id, secret_name)
+
+
+def ensure_vpc_peering(
+    credentials_json: str,
+    ofe_project: str,
+    ofe_vpc_name: str,
+    cluster_project: str,
+    cluster_vpc_name: str,
+):
+    """
+    Ensure a bi-directional VPC peering connection between
+    the Django/Frontend network (ofe_vpc_name) and the cluster's
+    VPC (cluster_vpc_name).
+    
+    :param credentials_json: GCP Service Account JSON
+    :param ofe_project: GCP project ID for Django/Frontend
+    :param ofe_vpc_name: Name of the Django/Frontend VPC (e.g. "ofetest-network")
+    :param cluster_project: GCP project ID of the cluster
+    :param cluster_vpc_name: Name of the cluster VPC
+    """
+    # Build a client for the "compute" API (version "v1") using your existing helper
+    ofe_project_id, ofe_compute = _get_gcp_client(credentials_json, service="compute", api_version="v1")
+    
+    # If the cluster project is different, build a second client
+    # If the same, just reuse ofe_compute
+    if cluster_project != ofe_project:
+        _, cluster_compute = _get_gcp_client(credentials_json, service="compute", api_version="v1")
+    else:
+        cluster_compute = ofe_compute
+
+    # Build self-links
+    ofe_vpc_self_link = f"projects/{ofe_project}/global/networks/{ofe_vpc_name}"
+    cluster_vpc_self_link = f"projects/{cluster_project}/global/networks/{cluster_vpc_name}"
+
+    peering_name_fe = f"{ofe_vpc_name}-peers-{cluster_vpc_name}"
+    peering_name_cluster = f"{cluster_vpc_name}-peers-{ofe_vpc_name}"
+
+    # -----------------------------------------------------------------
+    # 1. Check + create peering:  FE -> Cluster
+    # -----------------------------------------------------------------
+    if not _peering_exists(ofe_compute, ofe_project, ofe_vpc_name, peering_name_fe):
+        _add_peering(
+            ofe_compute,
+            project=ofe_project,
+            network=ofe_vpc_name,
+            peering_name=peering_name_fe,
+            peer_network=cluster_vpc_self_link
+        )
+
+    # -----------------------------------------------------------------
+    # 2. Check + create peering:  Cluster -> FE
+    # -----------------------------------------------------------------
+    if not _peering_exists(cluster_compute, cluster_project, cluster_vpc_name, peering_name_cluster):
+        _add_peering(
+            cluster_compute,
+            project=cluster_project,
+            network=cluster_vpc_name,
+            peering_name=peering_name_cluster,
+            peer_network=ofe_vpc_self_link
+        )
+
+
+def _peering_exists(compute, project, network, peering_name):
+    """Return True if the given peering_name exists in the specified network."""
+    try:
+        network_req = compute.networks().get(project=project, network=network)
+        network_obj = network_req.execute()
+        peerings = network_obj.get("peerings", [])
+        for p in peerings:
+            if p["name"] == peering_name:
+                return True
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking peering {peering_name} in {project}/{network}: {e}")
+        return False
+
+
+def _add_peering(compute, project, network, peering_name, peer_network):
+    """
+    Create a new peering from 'network' to 'peer_network' in 'project',
+    with autoCreateRoutes, import/export custom routes, etc.
+    """
+    current_network_url = f"projects/{project}/global/networks/{network}"
+    body = {
+        "networkPeering": {
+            "name": peering_name,
+            "network": peer_network,
+            "exchangeSubnetRoutes": True,
+            "exportCustomRoutes": True,
+            "importCustomRoutes": True,
+            "exportSubnetRoutesWithPublicIp": True,
+            "importSubnetRoutesWithPublicIp": False
+        }
+    }
+
+    logger.info(
+        f"Creating VPC peering {peering_name} from {current_network_url} -> {peer_network}"
+    )
+
+    # logger.info(f"body: {body}")
+
+    request = compute.networks().addPeering(
+        project=project, network=network, body=body
+    )
+
+    response = request.execute()
+
+    # logger.info(f"Peering creation request: {response}")
+
+    # Poll the operation until done:
+    op_name = response["name"]
+    _wait_for_global_operation(compute, project, op_name)
+    return response
+
+
+def _wait_for_global_operation(compute, project, operation):
+    """Simple polling loop for a global compute operation."""
+    while True:
+        result = compute.globalOperations().get(
+            project=project, operation=operation
+        ).execute()
+        if result["status"] == "DONE":
+            if "error" in result:
+                raise Exception(str(result["error"]))
+            return
+        time.sleep(3)
+
+
+def remove_vpc_peering(
+    credentials_json: str,
+    ofe_project: str,
+    ofe_vpc_name: str,
+    cluster_project: str,
+    cluster_vpc_name: str,
+):
+    """
+    Remove the bi-directional VPC peering connection between
+    the Django/Frontend network (ofe_vpc_name) and the cluster's
+    VPC (cluster_vpc_name).
+
+    :param credentials_json: GCP Service Account JSON
+    :param ofe_project: GCP project ID for Django/Frontend
+    :param ofe_vpc_name: Name of the Django/Frontend VPC (e.g. "ofetest-network")
+    :param cluster_project: GCP project ID of the cluster
+    :param cluster_vpc_name: Name of the cluster VPC
+    """
+    # Build a client for the "compute" API (version "v1") using your existing helper
+    ofe_project_id, ofe_compute = _get_gcp_client(credentials_json, service="compute", api_version="v1")
+    
+    # If the cluster project is different, build a second client; if the same, reuse ofe_compute
+    if cluster_project != ofe_project:
+        _, cluster_compute = _get_gcp_client(credentials_json, service="compute", api_version="v1")
+    else:
+        cluster_compute = ofe_compute
+
+    # Build self-links for both networks
+    ofe_vpc_self_link = f"projects/{ofe_project}/global/networks/{ofe_vpc_name}"
+    cluster_vpc_self_link = f"projects/{cluster_project}/global/networks/{cluster_vpc_name}"
+
+    # Determine peering names (assuming these are created similarly to ensure_vpc_peering)
+    peering_name_fe = f"{ofe_vpc_name}-peers-{cluster_vpc_name}"
+    peering_name_cluster = f"{cluster_vpc_name}-peers-{ofe_vpc_name}"
+
+    # -----------------------------------------------------------------
+    # 1. Remove peering: FE -> Cluster
+    # -----------------------------------------------------------------
+    if _peering_exists(ofe_compute, ofe_project, ofe_vpc_name, peering_name_fe):
+        _remove_peering(
+            ofe_compute,
+            project=ofe_project,
+            network=ofe_vpc_name,
+            peering_name=peering_name_fe
+        )
+    else:
+        logger.info(f"Peering {peering_name_fe} does not exist in {ofe_project}/{ofe_vpc_name}")
+
+    # -----------------------------------------------------------------
+    # 2. Remove peering: Cluster -> FE
+    # -----------------------------------------------------------------
+    if _peering_exists(cluster_compute, cluster_project, cluster_vpc_name, peering_name_cluster):
+        _remove_peering(
+            cluster_compute,
+            project=cluster_project,
+            network=cluster_vpc_name,
+            peering_name=peering_name_cluster
+        )
+    else:
+        logger.info(f"Peering {peering_name_cluster} does not exist in {cluster_project}/{cluster_vpc_name}")
+
+
+def _remove_peering(compute, project, network, peering_name):
+    """
+    Remove an existing VPC peering connection from the specified network.
+    """
+    body = {"name": peering_name}
+    logger.info(f"Removing VPC peering {peering_name} from network {network} in project {project}")
+
+    request = compute.networks().removePeering(project=project, network=network, body=body)
+    response = request.execute()
+
+    # Poll the operation until done
+    op_name = response["name"]
+    _wait_for_global_operation(compute, project, op_name)
+    logger.info(f"VPC peering {peering_name} removal completed")

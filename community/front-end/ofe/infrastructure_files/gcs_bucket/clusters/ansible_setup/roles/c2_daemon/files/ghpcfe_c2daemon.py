@@ -1102,7 +1102,7 @@ def cb_check_guac_health(message):
         send_message("ACK", response_msg)
         return
 
-    guac_url = f"http://{login_node_ip}:8080/guacamole/"
+    guac_url = f"http://{login_node_ip}:8080/guacamole"
 
     healthy = False
     attempts = 0

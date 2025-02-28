@@ -1,104 +1,240 @@
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# Would like to split this into multiple roles to expand support for
+# different distros/images eg, this role structure:
+#  - vdi_common (common shared setup tasks/generate secrets/keys etc)
+#  - vdi_user_ssh (configure ssh)
+#  - vdi_vnc (configure VNC server)
+#  --- main.yaml
+#  --- install_rocky.yaml
+#  --- install_debian.yaml
+#  --- install_ubuntu.yaml
+#  - guacamole
+#  - other_vdi_solutions_here
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 ---
-# Tasks tagged with 'renew_guac_token' are aimed to run when the cron
-# job runs so that the VDI access token is kept fresh.
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# 1. Shared tasks (used by VNC server and Guacamole configuration)
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+- name: Pre-configuration, secrets and requirements
+  block:
+  - name: Get default Python interpreter from update-alternatives
+    ansible.builtin.shell: >
+      /usr/sbin/update-alternatives --display python3 |
+      grep 'link currently points to' |
+      awk '{print $NF}'
+    register: default_python
+    changed_when: false
 
-# 1. Install requirements for gcloud Ansible and handle secrets
-- name: Get default Python interpreter from update-alternatives
-  ansible.builtin.shell: >
-    /usr/sbin/update-alternatives --display python3 |
-    grep 'link currently points to' |
-    awk '{print $NF}'
-  register: default_python
-  changed_when: false
-  tags:
-    - renew_guac_token
+  - name: Set default Python interpreter for Ansible
+    ansible.builtin.set_fact:
+      ansible_python_interpreter: "{{ default_python.stdout }}"
 
-- name: Set default Python interpreter for Ansible
-  ansible.builtin.set_fact:
-    ansible_python_interpreter: "{{ default_python.stdout }}"
-  tags:
-    - renew_guac_token
+  - name: Verify Python interpreter
+    ansible.builtin.command: "{{ ansible_python_interpreter }} --version"
+    register: python_version
 
-- name: Verify Python interpreter
-  ansible.builtin.command: "{{ ansible_python_interpreter }} --version"
-  register: python_version
-  tags:
-    - renew_guac_token
+  - name: Display Python version
+    ansible.builtin.debug:
+      msg: "The Python interpreter version is: {{ python_version.stdout }}"
 
-- name: Display Python version
-  ansible.builtin.debug:
-    msg: "The Python interpreter version is: {{ python_version.stdout }}"
-  tags:
-    - renew_guac_token
+  - name: Ensure requests library is present
+    pip:
+      name:
+        - requests
+        - passlib
+      state: present
+    retries: 10
+    delay: 3
 
-- name: Ensure requests library is present
-  pip:
-    name:
-      - requests
-      - passlib
-    state: present
+  - name: Ensure jq is present
+    package:
+      name: jq
+      state: present
+    retries: 10
+    delay: 3
 
-- name: Ensure jq is present
-  package:
-    name: jq
-    state: present
+  - name: Get project ID from metadata
+    uri:
+      url: "http://metadata.google.internal/computeMetadata/v1/project/project-id"
+      method: GET
+      return_content: yes
+      headers:
+        Metadata-Flavor: Google
+    register: project_id_response
+    failed_when: project_id_response.status != 200
+  - name: Set fact for GCP project ID
+    set_fact:
+      gcp_project_id: "{{ project_id_response.content }}"
 
-- name: Get project ID from metadata
-  uri:
-    url: "http://metadata.google.internal/computeMetadata/v1/project/project-id"
-    method: GET
-    return_content: yes
-    headers:
-      Metadata-Flavor: Google
-  register: project_id_response
-  failed_when: project_id_response.status != 200
-  tags:
-    - renew_guac_token
-- name: Set fact for GCP project ID
-  set_fact:
-    gcp_project_id: "{{ project_id_response.content }}"
-  tags:
-    - renew_guac_token
+  - name: Generate password for the VNC server connection
+    set_fact:
+      vncserver_password: "{{ lookup('community.general.random_string', length=16, special=false) }}"
+  - name: Create a GCP secret for VNC password
+    google.cloud.gcp_secret_manager:
+      name: "vnc-server-password-{{ cluster_name }}-{{ cluster_id }}"
+      auth_kind: machineaccount
+      state: present
+      project: "{{ gcp_project_id }}"
+      value: "{{ vncserver_password }}"
+    register: vncserver_secret
 
-- name: Generate password for the VNC server connection
-  set_fact:
-    vncserver_password: "{{ lookup('community.general.random_string', length=16, special=false) }}"
-- name: Create a GCP secret for VNC password
-  google.cloud.gcp_secret_manager:
-    name: "vnc-server-password-{{ cluster_name }}-{{ cluster_id }}"
-    auth_kind: machineaccount
-    state: present
-    project: "{{ gcp_project_id }}"
-    value: "{{ vncserver_password }}"
-  register: vncserver_secret
+  - name: Generate password for the Guacamole webserver admin user
+    set_fact:
+      guacamole_admin_password: "{{ lookup('community.general.random_string', length=16, special=false) }}"
+  - name: Create a GCP secret for Guacamole server login
+    google.cloud.gcp_secret_manager:
+      name: "guacamole-server-password-{{ cluster_name }}-{{ cluster_id }}"
+      auth_kind: machineaccount
+      state: present
+      project: "{{ gcp_project_id }}"
+      value: "{{ guacamole_admin_password }}"
+    register: guacserver_secret
+  - name: Compute Guacamole admin password hash to save to Guacserver
+    set_fact:
+      guacadmin_hash: "{{ guacamole_admin_password | hash('sha256') | upper }}"
 
-- name: Generate password for the VNC local user
-  set_fact:
-    vncuser_password: "{{ lookup('community.general.random_string', length=8, special=false) }}"
-- name: Add generated vnc user password to Secret Manager
-  google.cloud.gcp_secret_manager:
-    name: "vnc-user-password-{{ cluster_name }}-{{ cluster_id }}"
-    auth_kind: machineaccount
-    state: present
-    project: "{{ gcp_project_id }}"
-    value:  "{{ vncuser_password }}"
-  register: vncuser_secret
+  - name: Generate password for the VNC local user
+    set_fact:
+      vdiuser_password: "{{ lookup('community.general.random_string', length=6, special=false) }}"
+  - name: Add generated vnc user password to Secret Manager
+    google.cloud.gcp_secret_manager:
+      name: "vnc-user-password-{{ cluster_name }}-{{ cluster_id }}"
+      auth_kind: machineaccount
+      state: present
+      project: "{{ gcp_project_id }}"
+      value:  "{{ vdiuser_password }}"
+    register: vdiuser_secret
+  - name: Create {{ vdi_user }} user with generated password
+    user:
+      name: "{{ vdi_user }}"
+      groups: wheel
+      shell: /bin/bash
+      create_home: yes
+      password: "{{ vdiuser_password | password_hash('sha512') }}"
+  - name: Ensure SSH directory exists
+    file:
+      path: "/home/{{ vdi_user }}/.ssh"
+      state: directory
+      owner: "{{ vdi_user }}"
+      group: "{{ vdi_user_group }}"
+      mode: '0700'
+  - name: Generate SSH key pair for {{ vdi_user }}
+    community.crypto.openssh_keypair:
+      path: "/home/{{ vdi_user }}/.ssh/id_rsa"
+      owner: "{{ vdi_user }}"
+      group: "{{ vdi_user_group }}"
+      mode: '0600'
+    register: ssh_key
 
-- name: Generate random password used for Guacamole database
-  set_fact:
-    database_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
-- name: Add generated database password to Secret Manager
-  google.cloud.gcp_secret_manager:
-    # guac_id Change this to Guac id for multiple login nodes?
-    name: "vnc-db-password-{{ cluster_name }}-{{ cluster_id }}"
-    auth_kind: machineaccount
-    state: present
-    project: "{{ gcp_project_id }}"
-    value:  "{{ database_password }}"
-  register: database_secret
+  - name: Generate random password used for Guacamole database
+    set_fact:
+      database_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+  - name: Add generated database password to Secret Manager
+    google.cloud.gcp_secret_manager:
+      name: "db-password-{{ cluster_name }}-{{ cluster_id }}"
+      auth_kind: machineaccount
+      state: present
+      project: "{{ gcp_project_id }}"
+      value:  "{{ database_password }}"
+    register: database_secret
 
 
-# 2. Configure Guac'
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# 2. Configure VNC server
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+- name: VNC server setup and SSH configuration for {{ vdi_user }}
+  block:
+    # vnc server setup
+    - name: Update repository cache and install EPEL
+      package:
+        name: epel-release
+        state: present
+        update_cache: yes
+      retries: 10
+      delay: 3
+
+    - name: Install XFCE, base-x, and TigerVNC server
+      yum:
+        name:
+          - '@Xfce'
+          - '@base-x'
+          - tigervnc-server
+        state: present
+      retries: 10
+      delay: 3
+
+    - name: Ensure VNC configuration directory exists
+      file:
+        path: "/home/{{ vdi_user }}/.vnc"
+        state: directory
+        owner: "{{ vdi_user }}"
+        group: "{{ vdi_user_group }}"
+        mode: '0700'
+
+    - name: Set VNC password for {{ vdi_user }}
+      become_user: "{{ vdi_user }}"
+      shell: |
+        echo "{{ vncserver_password }}" | vncpasswd -f > "/home/{{ vdi_user }}/.vnc/passwd"
+        chmod 600 "/home/{{ vdi_user }}/.vnc/passwd"
+
+    - name: Allow {{ vdi_user }} passwordless sudo
+      copy:
+        content: "{{ vdi_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        dest: "/etc/sudoers.d/{{ vdi_user }}"
+        owner: root
+        group: root
+        mode: '0440'
+    
+    - name: Copy generated public key to authorized_keys for {{ vdi_user }}
+      authorized_key:
+        user: "{{ vdi_user }}"
+        state: present
+        key: "{{ ssh_key.public_key }}"
+
+    - name: Create xstartup file if missing
+      become_user: "{{ vdi_user }}"
+      copy:
+        dest: "/home/{{ vdi_user }}/.vnc/xstartup"
+        content: |
+          #!/bin/sh
+          xrdb "$HOME/.Xresources"
+          exec startxfce4
+        mode: '0755'
+        force: no
+
+    - name: Copy systemd service
+      copy:
+        src: vncserver@.service
+        dest: /etc/systemd/system/vncserver@.service
+        mode: '0644'
+
+    - name: Copy per-user VNC config
+      template:
+        src: config.j2
+        dest: "/home/{{ vdi_user }}/.vnc/config"
+        owner: "{{ vdi_user }}"
+        group: "{{ vdi_user }}"
+        mode: '0644'
+
+    - name: Template VNC users file
+      template:
+        src: vncserver.users.j2
+        dest: /etc/tigervnc/vncserver.users
+        mode: '0644'
+
+    - name: Reload systemd
+      command: systemctl daemon-reload
+
+    - name: Enable and start VNC server on :10
+      systemd:
+        name: "vncserver@:10"
+        enabled: yes
+        state: started
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# 3. Configure Guac'
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 - name: Guacamole setup
   block:
     - name: Update repository cache and install EPEL
@@ -106,6 +242,8 @@
         name: podman
         state: present
         update_cache: yes
+      retries: 10
+      delay: 3
 
     - name: Create a pod for the Guacamole containers
       containers.podman.podman_pod:
@@ -127,22 +265,30 @@
         - /opt/guacamole-db/data
         - /opt/guacamole-db/initdb
 
-    - name: Generate initdb.sql on the same VM
+    - name: Generate initdb.sql
       shell: >
         podman run --rm guacamole/guacamole:latest
         /opt/guacamole/bin/initdb.sh --postgresql
         > /opt/guacamole-db/initdb/initdb.sql
 
-    - name: Replace 'guacadmin' with $guacamole_admin_user in SQL script
-      shell: >
-        sed -i 's|guacadmin|{{ guacamole_admin_user }}|g'
-        /opt/guacamole-db/initdb/initdb.sql
+    - name: Update guacadmin password hash in initdb.sql
+      replace:
+        path: /opt/guacamole-db/initdb/initdb.sql
+        regexp: "decode\\('CA458A7D494E3BE824F5E1E175A1556C0F8EEF2C2D7DF3633BEC4A29C4411960', 'hex'\\)"
+        replace: "decode('{{ guacadmin_hash }}', 'hex')"
 
-    - name: Append bootstrap connections SQL to initdb.sql
+    - name: Remove salt from guacadmin in initdb.sql
+      replace:
+        path: /opt/guacamole-db/initdb/initdb.sql
+        regexp: "decode\\('FE24ADC5E11E2B25288D1704ABE67A79E342ECC26064CE69C5B3177795A82264', 'hex'\\)"
+        replace: "NULL"
+
+    # Probably nicer to re-work this bit with community.mysql.mysql_query at some point
+    - name: Append local connection details SQL to initdb.sql
       shell: |
         cat << 'EOF' >> /opt/guacamole-db/initdb/initdb.sql
 
-        -- Begin bootstrapping connections
+        -- Begin bootstrapping VNC connection
         WITH new_connection AS (
             INSERT INTO guacamole_connection (connection_name, protocol)
             VALUES ('{{ ansible_hostname }}', 'vnc')
@@ -153,8 +299,8 @@
             SELECT connection_id, param_name, param_value
             FROM new_connection, (VALUES
                 ('hostname', '{{ ansible_hostname }}'),
-                ('port', '5901'),
-                ('username', 'vncuser'),
+                ('port', '5910'),
+                ('username', '{{ vdi_user }}'),
                 ('password', '{{ vncserver_password }}')
             ) AS params(param_name, param_value)
         ),
@@ -164,10 +310,38 @@
             FROM guacamole_entity guac_admin, new_connection, (VALUES
                 ('READ'), ('UPDATE'), ('DELETE'), ('ADMINISTER')
             ) AS perms(permission)
-            WHERE guac_admin.name = '{{ guacamole_admin_user }}' AND guac_admin.type = 'USER'
+            WHERE guac_admin.name = 'guacadmin' AND guac_admin.type = 'USER'
         )
         SELECT 1;
-        -- End bootstrapping connections
+        -- End bootstrapping VNC connection
+
+        -- Begin bootstrapping SSH connection
+        WITH new_connection_ssh AS (
+            INSERT INTO guacamole_connection (connection_name, protocol)
+            VALUES ('{{ ansible_hostname }} SSH', 'ssh')
+            RETURNING connection_id
+        ),
+        insert_params_ssh AS (
+            INSERT INTO guacamole_connection_parameter (connection_id, parameter_name, parameter_value)
+            SELECT connection_id, param_name, parameter_value
+            FROM new_connection_ssh, (VALUES
+                ('hostname', '{{ ansible_hostname }}'),
+                ('port', '22'),
+                ('username', '{{ vdi_user }}'),
+                ('private-key', '{{ lookup("file", "/home/" ~ vdi_user ~ "/.ssh/id_rsa") | replace("\n", "\\n") }}')
+            ) AS params(param_name, parameter_value)
+        ),
+        insert_permissions_ssh AS (
+            INSERT INTO guacamole_connection_permission (entity_id, connection_id, permission)
+            SELECT guac_admin.entity_id, new_connection_ssh.connection_id, perms.permission::guacamole_object_permission_type
+            FROM guacamole_entity guac_admin, new_connection_ssh, (VALUES
+                ('READ'), ('UPDATE'), ('DELETE'), ('ADMINISTER')
+            ) AS perms(permission)
+            WHERE guac_admin.name = 'guacadmin' AND guac_admin.type = 'USER'
+        )
+        SELECT 1;
+        -- End bootstrapping SSH connection
+
         EOF
 
     - name: Start database container
@@ -197,10 +371,6 @@
       containers.podman.podman_container:
         name: guac_app
         image: guacamole/guacamole:latest
-        # publish:
-        #   - "8080:8080"
-        # network:
-        #   - name: guac_network
         pod: guac_pod
         env:
           POSTGRES_HOSTNAME: "guac_db"
@@ -214,6 +384,35 @@
         state: started
         restart_policy: always
 
+    - name: Generate systemd unit files for Guacamole pod and containers
+      containers.podman.podman_generate_systemd:
+        name: guac_pod
+        new: true
+        dest: /etc/systemd/system
+        no_header: true
+      register: guac_systemd_units
+      become: true
+
+    - name: Write generated systemd unit files to disk
+      copy:
+        dest: "/etc/systemd/system/{{ item.key }}.service"
+        content: "{{ item.value }}"
+        mode: '0644'
+      loop: "{{ guac_systemd_units.systemd_units | dict2items }}"
+      become: true
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+      become: true
+
+    - name: Enable and start the Guacamole pod service
+      ansible.builtin.systemd:
+        name: "pod-guac_pod.service"
+        enabled: yes
+        state: started
+      become: true
+
     - name: Wait for Guacamole to come up
       uri:
         url: "http://localhost:8080/guacamole/"
@@ -224,145 +423,19 @@
       until: guac_health.status == 200
       retries: 10
       delay: 3
-    - name: Delete any existing auth tokens from previous runs
-      google.cloud.gcp_secret_manager:
-        name: "guacamole-auth-token-{{ cluster_name }}-{{ cluster_id }}"
-        version: all
-        state: absent
-        auth_kind: machineaccount
-        project: "{{ gcp_project_id }}"
-      tags:
-        - renew_guac_token
-    - name: Obtain auth token from Guacamole
+
+    - name: Obtain auth token from Guacamole to confirm API health
       uri:
         url: "http://localhost:8080/guacamole/api/tokens"
         method: POST
         body_format: form-urlencoded
         body:
-          username: "{{ guacamole_admin_user }}"
-          password: "guacadmin"
+          username: "guacadmin"
+          password: "{{ guacamole_admin_password }}"
         return_content: yes
       register: guac_api_response
-      tags:
-        - renew_guac_token
-    - name: Set a fact to store only the auth token string
-      set_fact:
-        guac_auth_token: "{{ guac_api_response.json.authToken }}"
-      tags:
-        - renew_guac_token
-    - name: Save Guacamole auth token to Secret Manager
-      google.cloud.gcp_secret_manager:
-        name: "guacamole-auth-token-{{ cluster_name }}-{{ cluster_id }}"
-        state: present
-        auth_kind: machineaccount
-        value: "{{ guac_auth_token }}"
-        project: "{{ gcp_project_id }}"
-      register: guac_secret
-      tags:
-        - renew_guac_token
-
-    - name: Copy the renew_guac_token_playbook.sh script to the target host
-      copy:
-        src: renew_guac_token.sh
-        dest: /usr/local/bin/renew_guac_token.sh
-        mode: '0755'
-        owner: root
-        group: root
-
-    # NOT 2 hours - testing
-    - name: Create cron job to run the Ansible playbook for token renewal every 2 hours
-      cron:
-        name: "Renew Guacamole access token via playbook"
-        minute: "0"
-        hour: "*/2"
-        job: "/usr/local/bin/renew_guac_token.sh"
-        user: root
-
-  when: enable_guacamole_vdi | default(false) | bool
-
-
-# 3. Configure VNC server
-- name: VNC server setup
-  block:
-    # vnc server setup
-    - name: Update repository cache and install EPEL
-      package:
-        name: epel-release
-        state: present
-        update_cache: yes
-
-    - name: Install XFCE, base-x, and TigerVNC server
-      yum:
-        name:
-          - '@Xfce'
-          - '@base-x'
-          - tigervnc-server
-        state: present
-
-    - name: Set system to boot into graphical target
-      command: systemctl set-default graphical
-
-    - name: Create vncuser user with generated password
-      user:
-        name: vncuser
-        groups: wheel
-        shell: /bin/bash
-        create_home: yes
-        password: "{{ vncuser_password | password_hash('sha512') }}"
-
-    - name: Ensure VNC configuration directory exists
-      file:
-        path: /home/vncuser/.vnc
-        state: directory
-        owner: vncuser
-        group: vncuser
-        mode: '0700'
-
-    - name: Set VNC password for vncuser
-      become_user: vncuser
-      shell: |
-        echo "{{ vncserver_password }}" | vncpasswd -f > /home/vncuser/.vnc/passwd
-        chmod 600 /home/vncuser/.vnc/passwd
-
-    - name: Create xstartup file if missing
-      become_user: vncuser
-      copy:
-        dest: /home/vncuser/.vnc/xstartup
-        content: |
-          #!/bin/bash
-          xrdb "$HOME/.Xresources"
-          startxfce4 &
-        mode: '0755'
-        force: no  # Only create if it doesn't already exist
-
-    - name: Configure systemd service for VNC server
-      copy:
-        dest: /etc/systemd/system/vncserver@.service
-        content: |
-          [Unit]
-          Description=Start TightVNC server at startup
-          After=syslog.target network.target
-
-          [Service]
-          Type=forking
-          User=%i
-          Group=%i
-          WorkingDirectory=/home/%i
-
-          ExecStart=/usr/bin/vncserver -geometry 1920x1080 :1
-          ExecStop=/usr/bin/vncserver -kill :1
-
-          [Install]
-          WantedBy=multi-user.target
-        mode: '0644'
-
-    - name: Reload systemd daemon
-      command: systemctl daemon-reload
-
-    - name: Enable VNC server to start for the vncuser
-      command: systemctl enable vncserver@vncuser
-
-    - name: Start VNC server for the vncuser
-      command: systemctl start vncserver@vncuser
+      until: guac_api_response.status == 200 and (guac_api_response.json.authToken is defined)
+      retries: 10
+      delay: 3
 
   when: enable_guacamole_vdi | default(false) | bool

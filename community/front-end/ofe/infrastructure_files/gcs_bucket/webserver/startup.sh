@@ -84,6 +84,32 @@ EOL
 
 dnf install -y grafana
 
+
+# Build and install latest SQLite for Django 5 compatibility
+install_sqlite() {
+  local src_dir="/usr/local/src"
+  local tarball="sqlite-autoconf-3490100.tar.gz"
+  local url="https://www.sqlite.org/2025/${tarball}"
+  local build_dir="sqlite-autoconf-3490100"
+
+  cd "$src_dir" || { echo "ERROR: Could not change directory to $src_dir"; exit 1; }
+
+  if ! wget "$url"; then
+    echo "ERROR: Failed to download SQLite from $url"
+    exit 1
+  fi
+
+  tar xzf sqlite-autoconf-3490100.tar.gz
+  cd sqlite-autoconf-3490100
+  ./configure --prefix=/usr/local
+  make
+  sudo make install
+  echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/sqlite3.conf
+  sudo ldconfig
+}
+
+install_sqlite
+
 python3.12 -m ensurepip --upgrade
 
 pip3.12 install google-api-python-client \

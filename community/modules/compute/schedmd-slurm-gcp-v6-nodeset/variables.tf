@@ -547,7 +547,7 @@ variable "maintenance_interval" {
 variable "startup_script" {
   description = "Startup script used by VMs in this nodeset"
   type        = string
-  default     = "# no-op"
+  default     = null
 }
 
 variable "network_storage" {

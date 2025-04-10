@@ -65,7 +65,10 @@ SA_ROLES=('aiplatform.admin'
 	'bigquery.admin'
 	'secretmanager.admin'
 	'serviceusage.serviceUsageConsumer'
-	'servicenetworking.networksAdmin')
+	'servicenetworking.networksAdmin'
+	'artifactregistry.admin'
+	'cloudbuild.builds.builder'
+)
 
 #
 #
@@ -169,18 +172,18 @@ create_service_account() {
 	#
 	sa_fullname=$(sa_expand "${project}" "${account}")
 
-    # ---- Configure number of retries ----
-    local max_retries=3
-    local attempt
-    local success
+	# ---- Configure number of retries ----
+	local max_retries=3
+	local attempt
+	local success
 
 	for role in "${SA_ROLES[@]}"; do
 		success=false
 		attempt=1
 		while [[ ${attempt} -le ${max_retries} ]]; do
 			if gcloud projects add-iam-policy-binding "${project}" \
-					--member="serviceAccount:${sa_fullname}" \
-					--role="roles/${role}" >/dev/null 2>&1; then
+				--member="serviceAccount:${sa_fullname}" \
+				--role="roles/${role}" >/dev/null 2>&1; then
 				success=true
 				break
 			else
@@ -189,7 +192,6 @@ create_service_account() {
 					error "Retrying in a few seconds..."
 					sleep 3
 				fi
-				error "Success on attempt ${attempt}."
 			fi
 			((attempt++))
 		done

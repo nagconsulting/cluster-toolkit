@@ -25,6 +25,7 @@ import json
 import logging
 import subprocess
 import os
+import re
 
 from django.template import engines as template_engines
 from google.api_core.exceptions import PermissionDenied as GCPPermissionDenied
@@ -36,7 +37,7 @@ from . import utils
 from . import vdi
 
 from .. import grafana
-from ..models import Cluster, ApplicationInstallationLocation, ComputeInstance, GuacamoleInstance
+from ..models import Cluster, ApplicationInstallationLocation, ComputeInstance, ContainerRegistry, GuacamoleInstance
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +217,42 @@ class ClusterInfo:
 
         return ("\n\n".join(filesystems_yaml), refs)
 
+    def _prepare_ghpc_artifact_registry(self):
+        artifact_registry_yaml = []
+        template = self.env.get_template('blueprint/artifact_registry_config.yaml.j2')
+
+        registries = self.cluster.container_registry_relations.exclude(status="d")
+
+        has_registries = registries.exists()  # Check if any registries exist
+
+        for registry in registries:
+            # logger.info(f"Processing registry ID: {registry.id}, repo_mode: {registry.repo_mode}")
+
+            registry.status = "i"
+            registry.cloud_state = "nm"
+            registry.save(update_fields=["status"])
+
+            context = {
+                "registry_id": f"registry_{registry.id}",
+                "repo_mode": registry.repo_mode,
+                "format": registry.format,
+                "use_public_repository": registry.use_public_repository,
+                "repo_mirror_url": registry.repo_mirror_url,
+                "repo_username": registry.repo_username,
+                "repo_password": registry.repo_password,
+                "use_upstream_credentials": registry.use_upstream_credentials,
+            }
+
+            # logger.info(f"Registry Context: {json.dumps(context, indent=2)}")
+            rendered_yaml = template.render(context)
+            if not rendered_yaml.strip():
+                logger.warning(f"Rendered YAML for registry {registry.id} (mode: {registry.repo_mode}) is EMPTY!")
+
+            indented_yaml = self.indent_text(rendered_yaml, 1)
+            artifact_registry_yaml.append(indented_yaml)
+
+        return "\n\n".join(artifact_registry_yaml), has_registries
+
     def _prepare_ghpc_partitions(self, part_uses):
         partitions_yaml = []
         refs = []
@@ -231,7 +268,8 @@ class ClusterInfo:
                 'uses_str': uses_str,
                 'cluster': self.cluster,
                 'disk_range': disk_range,
-                'exclusive': exclusive
+                'exclusive': exclusive,
+                "startup_bucket": self.config["server"]["gcs_bucket"],
             }
             rendered_yaml = template.render(context)
             indented_yaml = self.indent_text(rendered_yaml, 1)   # Same here
@@ -263,7 +301,8 @@ class ClusterInfo:
             project_id = json.loads(self.cluster.cloud_credential.detail)["project_id"]
             filesystems_yaml, filesystems_refs = self._prepare_ghpc_filesystems()
             partitions_yaml, partitions_refs = self._prepare_ghpc_partitions(filesystems_refs)
-            cloudsql_yaml, cloudsql_refs = self._prepare_cloudsql_yaml()  # Incorporate CloudSQL YAML
+            artifact_registry_yaml, use_containers = self._prepare_ghpc_artifact_registry()
+            cloudsql_yaml, cloudsql_refs = self._prepare_cloudsql_yaml()
 
             # Use a template to generate the final YAML configuration
             template = self.env.get_template('blueprint/cluster_config.yaml.j2')
@@ -273,14 +312,17 @@ class ClusterInfo:
                 "site_name": SITE_NAME,
                 "filesystems_yaml": filesystems_yaml,
                 "partitions_yaml": partitions_yaml,
+                "artifact_registry_yaml": artifact_registry_yaml,
                 "cloudsql_yaml": cloudsql_yaml,
                 "cluster": self.cluster,
                 "controller_uses": self._yaml_refs_to_uses(controller_uses_refs, indent_level=2),
                 "login_uses": self._yaml_refs_to_uses(filesystems_refs, indent_level=2),
                 "controller_sa": "sa",
-                "startup_bucket": self.config["server"]["gcs_bucket"]
+                "startup_bucket": self.config["server"]["gcs_bucket"],
             }
             rendered_yaml = template.render(context)
+
+            # logger.debug("Generated YAML Output:\n" + rendered_yaml)
 
             if self.cluster.controller_node_image is not None:
                 context["controller_image_yaml"] = f"""instance_image:
@@ -296,6 +338,8 @@ class ClusterInfo:
 
             with yaml_file.open("w") as f:
                 f.write(rendered_yaml)
+            
+            self.use_containers = use_containers
 
         except Exception as e:
             logger.exception(f"Exception happened creating blueprint for cluster {self.cluster.name} - {e}")
@@ -322,6 +366,7 @@ class ClusterInfo:
                         "spack_dir": self.cluster.spackdir,
                         "enable_guacamole_vdi": self.cluster.enable_guacamole_vdi,
                         "fec2_topic": c2.get_topic_path(),
+                        "use_containers": self.use_containers,
                         "fec2_subscription": c2.get_cluster_subscription_path(
                             self.cluster.id
                         ),
@@ -473,6 +518,7 @@ class ClusterInfo:
         else:
             logger.error(f"No resources found for controller filters: {controller_filters}")
 
+
         login_filters = {
             "module": 'module.slurm_controller.module.slurm_login_instance["slurm-login"]',
             "type": "google_compute_instance_from_template",
@@ -520,6 +566,72 @@ class ClusterInfo:
                     "not work."
                 )
 
+    def extract_and_update_registry_info(self, tf_state):
+        """Extract repository_id and secret_id from terraform state and update existing ContainerRegistry models."""
+        filters = {
+            "type": "google_artifact_registry_repository",
+        }
+        tf_resources = self._get_tf_state_resource(tf_state, filters)
+
+        if not tf_resources:
+            logger.error("No repository resources found in terraform state.")
+            return
+
+        # Track updated registry IDs to prevent redundant updates
+        updated_registry_ids = set()
+
+        for resource in tf_resources:
+            instances = resource.get("instances", [])
+            for instance in instances:
+                attributes = instance.get("attributes", {})
+                repo_id = attributes.get("repository_id")
+
+                # Construct secret_id directly based on the repo_id pattern
+                secret_id = f"{repo_id}-secret" if repo_id else None
+
+                if repo_id:
+                    # Extract the numeric ID from the module name in tfstate
+                    # Example: "module.registry_5" should extract "5"
+                    module_name = resource.get("module", "")
+                    match = re.search(r"module\.registry_(\d+)", module_name)
+                    if match:
+                        django_registry_id = int(match.group(1))
+                        logger.info(f"Attempting to match registry ID: {django_registry_id} to repo_id: {repo_id}")
+
+                        # Match by model ID (primary key)
+                        registry = self.cluster.container_registry_relations.filter(id=django_registry_id).first()
+
+                        if registry:
+                            # Update repository_id if missing or different
+                            if not registry.repository_id or registry.repository_id != repo_id:
+                                registry.repository_id = repo_id  # Full name with unique identifier
+                                registry.cloud_state = "nm"
+                                registry.status = "i"
+                                registry.save(update_fields=["status"])
+
+                            # Update secret_id if missing or different
+                            if secret_id and (not registry.secret_id or registry.secret_id != secret_id):
+                                registry.secret_id = secret_id
+
+                            # Set status to ready if both repository_id and secret_id are available
+                            if registry.repository_id and registry.secret_id:
+                                registry.cloud_state = "m"
+                                registry.status = "r"
+                                registry.save(update_fields=["status"])
+
+                            # Save updates
+                            registry.save()
+                            logger.info(f"Updated registry '{registry.get_registry_url()}' with repository_id '{repo_id}' and secret_id '{secret_id}'.")
+                            updated_registry_ids.add(registry.id)
+                        else:
+                            logger.warning(f"No existing ContainerRegistry found for Django registry ID '{django_registry_id}' in cluster {self.cluster.id}")
+                    else:
+                        logger.warning(f"Could not extract registry ID from module name: {module_name}")
+
+        # Log info about missing registries if any
+        if not updated_registry_ids:
+            logger.warning("No ContainerRegistry entries were updated with repository or secret information.")
+
     def _apply_terraform(self):
         terraform_dir = self.get_terraform_dir()
 
@@ -538,6 +650,9 @@ class ClusterInfo:
             with tf_state_file.open("r") as statefp:
                 state = json.load(statefp)
 
+                # Extract and save Artifact Registry repository and secret information (if any)
+                self.extract_and_update_registry_info(state)
+
                 # Apply Perms to the service accounts
                 try:
                     service_accounts = self._get_service_accounts(state)
@@ -555,6 +670,7 @@ class ClusterInfo:
                 self.cluster.status = "i"
                 self.cluster.save()
 
+                # Filters for Management Nodes (Controller)
                 mgmt_filters = {
                     "module": "module.slurm_controller",
                     "type": "google_compute_instance_from_template",
@@ -579,7 +695,7 @@ class ClusterInfo:
                         node.public_ip if node.public_ip else node.internal_ip,
                     )
 
-                # Updated Filters for Login Nodes
+                # Filters for Login Nodes
                 login_filters = {
                     "module": 'module.slurm_controller.module.slurm_login_instance["slurm-login"]',
                     "type": "google_compute_instance_from_template",
@@ -736,6 +852,14 @@ class ClusterInfo:
                 vdi.remove_guac_instance(str(guac_instance.id))
 
             utils.run_terraform(terraform_dir, "destroy", extra_env=extra_env)
+
+            # Mark Container Registry objects as deleted
+            registries = ContainerRegistry.objects.filter(cluster=self.cluster)
+            registry_count = 0
+            for registry in registries:
+                registry.status = "d"
+                registry.save(update_fields=["status"])
+                registry_count += 1
 
             controller_sa = self.cluster.controller_node.service_account
 

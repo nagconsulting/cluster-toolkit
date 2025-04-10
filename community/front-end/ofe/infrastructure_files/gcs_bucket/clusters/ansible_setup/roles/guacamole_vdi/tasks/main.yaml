@@ -93,6 +93,11 @@
     set_fact:
       guacadmin_hash: "{{ guacamole_admin_password | hash('sha256') | upper }}"
 
+  - name: Create vdi user group {{ vdi_user_group }} if it does not exist
+    group:
+      name: "{{ vdi_user_group }}"
+      state: present
+
   - name: Generate password for the VNC local user
     set_fact:
       vdiuser_password: "{{ lookup('community.general.random_string', length=6, special=false) }}"
@@ -437,5 +442,3 @@
       until: guac_api_response.status == 200 and (guac_api_response.json.authToken is defined)
       retries: 10
       delay: 3
-
-  when: enable_guacamole_vdi | default(false) | bool

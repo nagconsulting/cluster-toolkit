@@ -515,13 +515,18 @@ def _get_gcp_instance_pricing(
             "c2": "Compute optimized Core",
             "c2d": "C2D AMD Instance Core",
             "c3d": "C3D AMD Instance Core",
+            "c4a": "C4A Arm Instance Core",
+            "t2a": "T2A Arm Instance Core",
             "t2d": "T2D AMD Instance Core",
             "a2": "A2 Instance Core",
+            "a3": "A3 Instance Core",
+            "g2": "G2 Custom Instance Core",
             "m1": "Memory-optimized Instance Core",  # ??
             "m2": "Memory Optimized Upgrade Premium for Memory-optimized Instance Core",  # pylint: disable=line-too-long
             "m3": "Memory-optimized Instance Core",
             "n2": "N2 Instance Core",
             "n1": "Custom Instance Core",  # ??
+            "n4": "N4 Custom Instance Core",
         }
         instance_class = instance_type.split("-")[0]
         if instance_class not in instance_description_mapper:
@@ -564,14 +569,19 @@ def _get_gcp_instance_pricing(
             "h3": "Compute optimized Ram",
             "c2d": "C2D AMD Instance Ram",
             "c3d": "C3D AMD Instance Ram",
+            "c4a": "C4A Instance Ram",
+            "t2a": "T2A Instance Ram",
             "c4": "C4 Instance RAM",
             "t2d": "T2D AMD Instance Ram",
             "a2": "A2 Instance Ram",
+            "a3": "A3 Instance Ram",
+            "g2": "G2 Custom Instance Ram",
             "m1": "Memory-optimized Instance Ram",
             "m2": "Memory-optimized Instance Ram",
             "m3": "Memory-optimized Instance Ram",  # ??
             "n2": "N2 Instance Ram",
             "n1": "Custom Instance Ram", # ??
+            "n4": "N4 Instance Ram",
         }
         # TODO: Deal with 'Extended Instance Ram'
         instance_class = instance_type.split("-")[0]

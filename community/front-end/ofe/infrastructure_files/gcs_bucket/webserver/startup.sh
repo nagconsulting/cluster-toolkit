@@ -32,7 +32,9 @@ SERVER_HOSTNAME=$(curl --silent --fail http://metadata/computeMetadata/v1/instan
 config_bucket=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/webserver-config-bucket -H "Metadata-Flavor: Google")
 c2_topic=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/ghpcfe-c2-topic -H "Metadata-Flavor: Google")
 deploy_mode=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/deploy_mode -H "Metadata-Flavor: Google")
+deployment_name=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/deployment_name -H "Metadata-Flavor: Google")
 host_vpc_name=$(curl --silent --show-error http://metadata/computeMetadata/v1/instance/attributes/host_vpc_name -H "Metadata-Flavor: Google")
+
 # Exit if deployment already exists to stop startup script running on reboots
 #
 if [[ -d /opt/gcluster/cluster-toolkit ]]; then
@@ -240,7 +242,8 @@ sudo su - gcluster -c /bin/bash <<EOF
   echo "    gcs_bucket: \"${config_bucket}\"" >> configuration.yaml
   echo "    c2_topic: \"${c2_topic}\"" >> configuration.yaml
   echo "    host_vpc_name: \"${host_vpc_name}\"" >> configuration.yaml
-
+  echo "    deployment_name: \"${deployment_name}\"" >> configuration.yaml
+  
   printf "\nInitalising Django environments...\n"
   mkdir /opt/gcluster/run
   pushd website

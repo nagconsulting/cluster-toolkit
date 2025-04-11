@@ -2102,12 +2102,59 @@ class GuacamoleInstance(VDIInstance):
     def get_vdi_user_secret_name(self):
         return f"vnc-user-password-{self.cluster.name}-{self.cluster.id}"
 
-    def get_guac_password_secret_name(self):
-        return f"guacamole-server-password-{self.cluster.name}-{self.cluster.id}"
-
     def __str__(self):
         return f"Guacamole VDI for {self.cluster.name}"
 
     @property
     def vdi_type_name(self):
         return "Guacamole"
+
+
+class GuacamoleConnection(models.Model):
+    """
+    Represents a single user-specific Guacamole connection.
+    Each user can have a unique connection_id, VNC port, 
+    and corresponding secrets.
+    """
+    instance = models.ForeignKey(
+        GuacamoleInstance,
+        on_delete=models.CASCADE,
+        related_name="connections",
+        help_text="Which Guacamole server instance this belongs to"
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        help_text="Which Django user this Guac connection is for"
+    )
+    # e.g. 5901, 5902, etc. 
+    vnc_port = models.PositiveIntegerField(default=5901)
+
+    # This “connection_id” is what Guacamole uses in the URL to identify the connection.
+    connection_id = models.CharField(max_length=10, default="1")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # Ensure a (instance, user) pair is unique 
+        # if you only want one connection per user
+        unique_together = ("instance", "user")
+
+    def __str__(self):
+        return f"GuacConn: user={self.user.username}, port={self.vnc_port}"
+
+    def get_vdi_user_secret_name(self):
+        """
+        If you want a unique secret for each user, 
+        you might incorporate the user’s username.
+        """
+        cluster = self.instance.cluster
+        return f"vnc-user-password-{self.user.username}-{cluster.name}-{cluster.id}"
+
+    def generate_connection_string(self):
+        """
+        If you still store connections in the Guac postgresql “connections” table 
+        with a connection_id, you can generate the base64 string here as well.
+        """
+        return self.instance.generate_guacamole_connection_string(self.connection_id)

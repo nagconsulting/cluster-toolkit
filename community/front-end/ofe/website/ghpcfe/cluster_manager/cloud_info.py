@@ -855,11 +855,11 @@ def get_vnc_server_password(credentials_json, project_id, guac_instance):
     return get_secret_value(credentials_json, project_id, secret_name)
 
 
-def get_vdi_user_password(credentials_json, project_id, guac_instance):
+def get_vdi_user_password(credentials_json, project_id, guac_conn):
     """
     Retrieve the password for the VNC user from Secret Manager.
     """
-    secret_name = guac_instance.get_vdi_user_secret_name()
+    secret_name = guac_conn.get_vdi_user_secret_name()
     return get_secret_value(credentials_json, project_id, secret_name)
 
 
@@ -867,7 +867,7 @@ def get_guac_admin_password(credentials_json, project_id, guac_instance):
     """
     Retrieve the password for the Guacamole 'guacadmin' user.
     """
-    secret_name = guac_instance.get_guac_password_secret_name()
+    secret_name = guac_instance.get_guac_server_secret_name()
     return get_secret_value(credentials_json, project_id, secret_name)
 
 

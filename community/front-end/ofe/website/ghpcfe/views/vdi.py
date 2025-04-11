@@ -5,10 +5,10 @@ import logging
 from django.views import generic
 from django.conf import settings
 from django.shortcuts import render
-from ..models import GuacamoleInstance
+from ..models import GuacamoleInstance, GuacamoleConnection
 from ..permissions import SuperUserRequiredMixin
 from ..cluster_manager import cloud_info
-from django.http import JsonResponse, HttpResponseBadRequest
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.views import View
 from django.shortcuts import get_object_or_404
 
@@ -30,7 +30,7 @@ class VDIListView(SuperUserRequiredMixin, generic.ListView):
 
         """
         # Example if you only have Guacamole so far:
-        return GuacamoleInstance.objects.all()
+        return GuacamoleConnection.objects.filter(user=self.request.user)
 
         # Future: if you have multiple subclasses:
         # from django.db.models import Q
@@ -45,7 +45,7 @@ class VDIListView(SuperUserRequiredMixin, generic.ListView):
         context["navtab"] = "vdi"
 
         # Only determine if autorefresh is needed
-        loading = any(inst.status in ["n", "i"] for inst in context["vdi_list"])
+        loading = any(conn.instance.status in ["n", "i"] for conn in context["vdi_list"])
         context["loading"] = 1 if loading else 0
 
         return context
@@ -60,8 +60,19 @@ class VDIGetPasswordView(SuperUserRequiredMixin, View):
 
     def get(self, request, pk, *args, **kwargs):
         # Retrieve the instance (only GuacamoleInstance for now)
-        instance = get_object_or_404(GuacamoleInstance, pk=pk)
-        # Decide which password to return; default to vnc_server
+        conn = get_object_or_404(GuacamoleConnection, pk=connection_id)
+        
+        # security: optionally confirm that the requesting user 
+        # is either a superuser or the same user who owns this connection
+        if not (request.user.is_superuser or request.user == conn.user):
+            return HttpResponseForbidden("Not allowed to view this password.")
+
+        # Grab the “cloud_info” from the cluster
+        credentials_json = conn.instance.cluster.cloud_credential.detail
+        cred_dict = json.loads(credentials_json)
+        project_id = cred_dict.get("project_id")
+
+        # For the user’s personal password:
         password_type = request.GET.get('type', 'vdi_user')
 
         try:
@@ -74,17 +85,17 @@ class VDIGetPasswordView(SuperUserRequiredMixin, View):
             project_id = cred_dict.get("project_id")
 
             if password_type == "vnc_server":
-                password = cloud_info.get_vnc_server_password(credentials_json, project_id, instance)
-            elif password_type == "vdi_user":
-                password = cloud_info.get_vdi_user_password(credentials_json, project_id, instance)
+                password = cloud_info.get_vnc_server_password(credentials_json, project_id, conn.instance)
+            if password_type == "vdi_user":
+                # we pass the username or the full GuacamoleConnection to the function
+                password = cloud_info.get_vdi_user_password(credentials_json, project_id, conn)
+                return JsonResponse({"password": password})
             elif password_type == "guac_password":
-                password = cloud_info.get_guac_admin_password(credentials_json, project_id, instance)
-                # Check if the request wants SSH or VNC; conn '2' will be passed for SSH
-                conn_id = request.GET.get('conn', '1')
-                connection_string = instance.generate_guacamole_connection_string(conn_id)
-                return JsonResponse({"password": password, "connection_string": connection_string})
+                password = cloud_info.get_guac_admin_password(credentials_json, project_id, conn.instance)
+                encoded_conn = conn.generate_connection_string()
+                return JsonResponse({"password": password, "connection_string": encoded_conn})
             elif password_type == "auth_token":
-                token = cloud_info.get_guac_auth_token(credentials_json, project_id, instance)
+                token = cloud_info.get_guac_auth_token(credentials_json, project_id, conn.instance)
                 password = token
             else:
                 return HttpResponseBadRequest("Invalid password type requested.")

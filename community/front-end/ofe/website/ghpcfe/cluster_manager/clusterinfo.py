@@ -221,6 +221,9 @@ class ClusterInfo:
         artifact_registry_yaml = []
         template = self.env.get_template('blueprint/artifact_registry_config.yaml.j2')
 
+        if not self.cluster.use_containers:
+            return "", False
+
         registries = self.cluster.container_registry_relations.exclude(status="d")
 
         has_registries = registries.exists()  # Check if any registries exist
@@ -344,6 +347,28 @@ class ClusterInfo:
         except Exception as e:
             logger.exception(f"Exception happened creating blueprint for cluster {self.cluster.name} - {e}")
 
+    def _generate_guac_user_port_map(self):
+        """
+        Assign sequential ports (5901, 5902, etc.) and a connection_id (1, 2, etc.)
+        for each user authorized on this cluster. Returns a list of dicts like:
+        [
+        {"username": "alice", "port": 5901, "connection_id": "1"},
+        {"username": "bob",   "port": 5902, "connection_id": "2"},
+        ...
+        ]
+        """
+        base_port = 5901
+        user_port_map = []
+
+        # Using .order_by("id") or .order_by("username") ensures consistent ordering
+        for i, user in enumerate(self.cluster.authorised_users.order_by("id"), start=0):
+            user_port_map.append({
+                "username":      user.username,
+                "port":          base_port + i,
+                "connection_id": str(i + 1),
+            })
+        return user_port_map
+
     def _prepare_bootstrap_gcs(self):
         template_dir = (
             self.config["baseDir"]
@@ -352,6 +377,13 @@ class ClusterInfo:
             / "templates"
         )
         engine = template_engines["django"]
+
+        # If Guacamole is enabled, gather the user→port mapping
+        guac_user_port_map = []
+        if self.cluster.enable_guacamole_vdi:
+            guac_user_port_map = self._generate_guac_user_port_map()
+            guac_user_port_map_json = json.dumps(guac_user_port_map)
+
         for templ in ["controller", "login", "compute"]:
             template_fn = template_dir / f"bootstrap_{templ}.sh"
             with open(template_fn, "r", encoding="utf-8") as fp:
@@ -361,15 +393,14 @@ class ClusterInfo:
                 # startup script
                 rendered_file = template.render(
                     context={
-                        "server_bucket": self.config["server"]["gcs_bucket"],
-                        "cluster": self.cluster,
-                        "spack_dir": self.cluster.spackdir,
-                        "enable_guacamole_vdi": self.cluster.enable_guacamole_vdi,
-                        "fec2_topic": c2.get_topic_path(),
-                        "use_containers": self.use_containers,
-                        "fec2_subscription": c2.get_cluster_subscription_path(
-                            self.cluster.id
-                        ),
+                        "server_bucket":         self.config["server"]["gcs_bucket"],
+                        "cluster":               self.cluster,
+                        "spack_dir":             self.cluster.spackdir,
+                        "enable_guacamole_vdi":  self.cluster.enable_guacamole_vdi,
+                        "fec2_topic":            c2.get_topic_path(),
+                        "use_containers":        self.use_containers,
+                        "fec2_subscription":     c2.get_cluster_subscription_path(self.cluster.id),
+                        "guac_user_port_map":    guac_user_port_map_json,
                     }
                 )
                 blobpath = f"clusters/{self.cluster.id}/{template_fn.name}"

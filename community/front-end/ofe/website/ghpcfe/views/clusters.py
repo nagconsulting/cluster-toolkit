@@ -58,6 +58,8 @@ from ..models import (
     Task,
     User,
     ContainerRegistry,
+    GuacamoleConnection,
+    GuacamoleInstance,
 )
 from ..serializers import ClusterSerializer
 from ..forms import ClusterForm, ClusterMountPointForm, ClusterPartitionForm, ContainerRegistryForm
@@ -320,6 +322,9 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
             can_delete=True
         )
 
+        if not self.object.use_containers:
+            ContainerRegistry.objects.filter(cluster=self.object).update(status='d')
+
         if self.request.POST:
             kwargs["data"] = self.request.POST
 
@@ -353,6 +358,35 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
         context["container_registry_formset"] = self.get_container_registry_formset()
         return context
 
+    def assign_vnc_ports_for_new_users(self, new_users):
+        """
+        Helper method that assigns each newly added user a VNC port.
+        """
+        base_port = 5901
+        # The total number of users already authorized (excluding these newly added):
+        already_assigned = self.object.authorised_users.count() - len(new_users)
+        next_port = base_port + already_assigned
+
+        try:
+            vdi_inst = self.object.vdi_instance
+        except Cluster.vdi_instance.RelatedObjectDoesNotExist:
+            logger.warning(f"No GuacamoleInstance row exists for cluster {self.object.name}. Skipping port assignment.")
+            return
+
+        for i, user in enumerate(new_users):
+            port = next_port + i
+            logger.info(f"Assigning port {port} for user {user.username} on cluster {self.object.name}.")
+
+            # Create a GuacamoleConnection row if cluster has a GuacamoleInstance
+            if self.object.vdi_instance:
+                GuacamoleConnection.objects.create(
+                    instance=vdi_inst,
+                    user=user,
+                    vnc_port=port,
+                    connection_id=str(already_assigned + i + 1),
+                )
+            else:
+                logger.warning(f"No GuacamoleInstance is set for cluster {self.object.name}; skipping creation.")
 
     def form_valid(self, form):
         logger.info("In form_valid")
@@ -360,6 +394,8 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
         mountpoints = context["mountpoints_formset"]
         partitions = context["cluster_partitions_formset"]
         container_registry_formset = context["container_registry_formset"]
+
+        old_authorized = set(self.object.authorised_users.all())
 
         logger.info(f"Received {len(container_registry_formset.forms)} registry forms.")
 
@@ -387,7 +423,8 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
             suffix = self.object.cloud_id.split("-")[-1]
             self.object.cloud_id = self.object.name + "-" + suffix
         
-        self.object.cloud_region = self.object.subnet.cloud_region
+        if self.object.subnet:
+            self.object.cloud_region = self.object.subnet.cloud_region
 
         machine_info = cloud_info.get_machine_types(
             "GCP",
@@ -472,77 +509,73 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
         # Get the existing MountPoint objects associated with the cluster
         existing_mount_points = MountPoint.objects.filter(cluster=self.object)
 
-        # Iterate through the existing mount points and check if they are in the updated formset
-        for mount_point in existing_mount_points:
-            if not any(mount_point_form.instance == mount_point for mount_point_form in mountpoints.forms):
-                # The mount point is not in the updated formset, so delete it
-                mount_point_path = mount_point.mount_path
-                mount_point_id = mount_point.pk
-                logger.info(f"Deleting mount point: {mount_point_path}, ID: {mount_point_id}")
-                mount_point.delete()
-
        # Get the existing ClusterPartition objects associated with the cluster
         existing_partitions = ClusterPartition.objects.filter(cluster=self.object)
 
         logger.info(f"Processing total {len(partitions.forms)} partition forms.")
         logger.info(f"Existing number of partitions is {len(partitions.forms)}.")
 
-        for partition in existing_partitions:
-            #logger.info(f"Checking existing partition: {partition.name}")
-            found = False
-            for partition_form in partitions.forms:
-                #logger.info(f"Checking form for partition: {partition_form.instance.name}")
-                if partition_form.instance == partition:
-                    found = True
-                    delete_status = partition_form.cleaned_data.get('DELETE', False)
-                    if delete_status:
-                        # Log the intent to delete then delete the partition
-                        logger.info(f"Partition: {partition.name} (ID: {partition.pk}) marked for deletion.")
-                        partition.delete()
+        try:
+            with transaction.atomic():
+                # -- (a) Save the main cluster object w/o M2M
+                self.object = form.save(commit=False)
+                self.object.save()
+
+                # -- (b) Save M2M (authorised_users)
+                form.save_m2m()
+
+                if self.object.enable_guacamole_vdi and not hasattr(self.object, "vdi_instance"):
+                    guac_instance = GuacamoleInstance(cluster=self.object, guac_url="http://pending", status="n")
+                    guac_instance.save()
+
+                # figure out newly added users for guac
+                new_authorized = set(self.object.authorised_users.all())
+                newly_added_users = new_authorized - old_authorized
+                if newly_added_users and self.object.enable_guacamole_vdi:
+                    self.assign_vnc_ports_for_new_users(newly_added_users)
+
+                # -- (c) Delete any mount points that aren't in the new forms
+                for mp in existing_mount_points:
+                    if not any(f.instance == mp for f in mountpoints.forms):
+                        logger.info(f"Deleting mount point: {mp.mount_path} (ID {mp.pk})")
+                        mp.delete()
+
+                # -- (d) Delete any partitions that are removed in the form
+                for p in existing_partitions:
+                    found_form = None
+                    for pf in partitions.forms:
+                        if pf.instance == p:
+                            found_form = pf
+                            break
+                    if found_form:
+                        # If user selected "DELETE" on the form
+                        if found_form.cleaned_data.get("DELETE", False):
+                            logger.info(f"Partition: {p.name} (ID {p.pk}) marked for deletion.")
+                            p.delete()
                     else:
-                        logger.info(f"No deletion requested for existing partition: {partition.name}.")
-            if not found:
-                # Log if no corresponding form was found for the partition
-                logger.info(f"No form found for Partition: {partition.name}.")
+                        logger.info(f"No form found for Partition: {p.name} (ID {p.pk}); deleting.")
+                        p.delete()
 
-        try:
-            with transaction.atomic():
-                self.object.save()
-                self.object = form.save()
-                mountpoints.instance = self.object
-                mountpoints.save()
-
-                partitions.instance = self.object
-                partitions.save()
-
-                container_registry_formset.instance = self.object
-
-                # Log instances before saving
-                # for registry_form in container_registry_formset.forms:
-                #     logger.info(f"Before save: form instance repo_mode={registry_form.instance.repo_mode}, id={registry_form.instance.pk}")
-
-                registries = container_registry_formset.save()
-
-                # Log saved instances
-                for registry in registries:
-                    # logger.info(f"Saved registry ID: {registry.id}, repo_mode: {registry.repo_mode}")
-                    registry.project_id = self.object.project_id  # Set project dynamically
-                    registry.save()
-
-        except ValidationError as ve:
-            form.add_error(None, ve)
-            return self.form_invalid(form)
-
-        try:
-            with transaction.atomic():
-                # Save the modified Cluster object
-                self.object.save()
-                self.object = form.save()
+                # -- (e) Save the formsets
                 mountpoints.instance = self.object
                 mountpoints.save()
 
                 partitions.instance = self.object
                 parts = partitions.save()
+
+                if container_registry_formset:
+                    container_registry_formset.instance = self.object
+                    registries = container_registry_formset.save()
+                    # Example: set project_id on each registry
+                    for reg in registries:
+                        reg.project_id = self.object.project_id
+                        reg.save()
+
+                for part in parts:
+                    # sample check
+                    # if part.machine_type not in machine_info:
+                    #    raise ValidationError(f"Invalid machine type: {part.machine_type}")
+                    pass
                 
                 try:
                     total_nodes_requested = {}

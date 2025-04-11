@@ -25,6 +25,10 @@
     register: default_python
     changed_when: false
 
+  - name: Get Guac' user / port mapping
+    ansible.builtin.set_fact:
+      guac_map: "{{ ansible_local.config.guac_user_port_map | default([]) }}"
+
   - name: Set default Python interpreter for Ansible
     ansible.builtin.set_fact:
       ansible_python_interpreter: "{{ default_python.stdout }}"

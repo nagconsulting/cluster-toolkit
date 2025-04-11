@@ -22,29 +22,19 @@ from django.utils.safestring import mark_safe
 
 
 class UserAdmin(BaseUserAdmin):
-    """ Custom UserAdmin """
+    """
+    Custom UserAdmin
+    """
     add_form = UserCreationForm
     form = UserUpdateForm
     model = User
-    list_display = (
-        "username",
-        "first_name",
-        "last_name",
-        "email",
-        "is_staff",
-        "is_active",
-    )
-    list_filter = (
-        "email",
-        "is_staff",
-        "is_active",
-    )
-    ordering = ("username",)
-    readonly_fields = (
-        "last_login",
-        "date_joined",
-    )
 
+    list_display = ("username", "first_name", "last_name", "email", "is_staff", "is_active")
+    list_filter = ("email", "is_staff", "is_active")
+    ordering = ("username",)
+    readonly_fields = ("last_login", "date_joined")
+
+    # Normal fieldsets for editing an existing user
     fieldsets = (
         (None, {
             "fields": (
@@ -64,7 +54,7 @@ class UserAdmin(BaseUserAdmin):
                 "is_active",
                 "is_staff",
                 "is_superuser",
-                "roles",
+                "roles"
             )
         }),
         ("Important dates", {
@@ -72,6 +62,13 @@ class UserAdmin(BaseUserAdmin):
         }),
     )
 
+    # Override the default add_fieldsets inherited from BaseUserAdmin
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('username', 'first_name', 'last_name', 'email', 'password1', 'password2'),
+        }),
+    )
 
 class ContainerRegistryInline(admin.TabularInline):
     model = ContainerRegistry

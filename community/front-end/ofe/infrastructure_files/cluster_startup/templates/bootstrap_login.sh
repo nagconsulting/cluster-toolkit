@@ -52,4 +52,13 @@ enable_guacamole_vdi=${ENABLE_GUACAMOLE_VDI}
 cluster_name=${CLUSTER_NAME}
 EOF
 
+{% if enable_guacamole_vdi and guac_user_port_map %}
+cat >>/etc/ansible/facts.d/ghpcfe.fact <<EOF
+guac_user_port_map={{ guac_user_port_map|safe }}
+EOF
+{% endif %}
+
+cat >>/etc/ansible/facts.d/ghpcfe.fact <<EOF
+EOF
+
 exec ansible-playbook ./login.yaml

@@ -17,8 +17,9 @@
 BUCKET={{ server_bucket }}
 CLUSTER_ID={{ cluster.id }}
 SPACK_DIR={{ spack_dir }}
-ENABLE_GUACAMOLE_VDI={{ enable_guacamole_vdi }}
+ENABLE_GUACAMOLE_VDI={{ enable_guacamole_vdi|default:'False' }}
 CLUSTER_NAME={{ cluster.name }}
+GUAC_USER_PORT_MAP='{{ guac_user_port_map|default:"[]"|safe }}'
 
 echo "This is the startup script for the login nodes on cluster ${CLUSTER_ID}"
 
@@ -43,22 +44,26 @@ cd /tmp/ansible_setup
 
 # Set up facts file
 mkdir -p /etc/ansible/facts.d
-cat >/etc/ansible/facts.d/ghpcfe.fact <<EOF
-[config]
-cluster_id=${CLUSTER_ID}
-cluster_bucket=${BUCKET}
-spack_dir=${SPACK_DIR}
-enable_guacamole_vdi=${ENABLE_GUACAMOLE_VDI}
-cluster_name=${CLUSTER_NAME}
-EOF
 
-{% if enable_guacamole_vdi and guac_user_port_map %}
-cat >>/etc/ansible/facts.d/ghpcfe.fact <<EOF
-guac_user_port_map={{ guac_user_port_map|safe }}
-EOF
-{% endif %}
+LOWER_VDI="${ENABLE_GUACAMOLE_VDI,,}"
+if [[ "$LOWER_VDI" == "true" ]]; then
+  GUAC_BOOL=true
+else
+  GUAC_BOOL=false
+fi
 
-cat >>/etc/ansible/facts.d/ghpcfe.fact <<EOF
+
+cat > /etc/ansible/facts.d/ghpcfe.fact <<EOF
+{
+    "config": {
+      "cluster_id": ${CLUSTER_ID},
+      "cluster_bucket": "${BUCKET}",
+      "spack_dir": "${SPACK_DIR}",
+      "enable_guacamole_vdi": ${GUAC_BOOL},
+      "cluster_name": "${CLUSTER_NAME}",
+      "guac_user_port_map": ${GUAC_USER_PORT_MAP}
+    }
+}
 EOF
 
 exec ansible-playbook ./login.yaml

@@ -323,7 +323,8 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
         )
 
         if not self.object.use_containers:
-            ContainerRegistry.objects.filter(cluster=self.object).update(status='d')
+            # ContainerRegistry.objects.filter(cluster=self.object).update(status='d')
+            ContainerRegistry.objects.filter(cluster=self.object).delete()
 
         if self.request.POST:
             kwargs["data"] = self.request.POST

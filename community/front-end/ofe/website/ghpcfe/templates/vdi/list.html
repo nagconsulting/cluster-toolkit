@@ -30,30 +30,30 @@
         {{ vdi.id }}
       </td>
       <td>
-        <a href="../cluster/{{ vdi.cluster.id }}">
-          {{ vdi.cluster.name }} (ID: {{ vdi.cluster.id }})
+        <a href="/cluster/{{ vdi.instance.cluster.id }}">
+          {{ vdi.instance.cluster.name }} (ID: {{ vdi.instance.cluster.id }})
         </a>
       </td>
       <td>
-        {{ vdi.vdi_type_name }}
+        {{ vdi.instance.vdi_type_name }}
       </td>
       <td>
-        {% if vdi.status == "i" %}
+        {% if vdi.instance.status == "i" %}
         <img src="/static/img/loading.gif" style="width:32px;height:32px;">
         {% endif %}
-        {% if vdi.status == "r" %}
+        {% if vdi.instance.status == "r" %}
         <img src="/static/img/status-ready.png" style="width:32px;height:32px;">
         {% endif %}
-        {% if vdi.status == "n" %}
+        {% if vdi.instance.status == "n" %}
         <img src="/static/img/status-configured.png" style="width:30px;height:32px;">
         {% endif %}
-        {% if vdi.status == "d" %}
+        {% if vdi.instance.status == "d" %}
         <img src="/static/img/status-deleted.png" style="width:30px;height:32px;">
         {% endif %}
-        {{ vdi.get_status_display }}
+        {{ vdi.instance.get_status_display }}
       </td>
       <td>
-        {% if vdi.status == "r" %}
+        {% if vdi.instance.status == "r" %}
           <span id="vnc-user-password-{{ vdi.id }}"
                 style="display: none;"
                 data-loaded="false">
@@ -79,7 +79,7 @@
         {% endif %}
       </td>             
       <td>
-        {% if vdi.vdi_type_name == "Guacamole" and vdi.status == "r" %}
+        {% if vdi.instance.vdi_type_name == "Guacamole" and vdi.instance.status == "r" %}
         <div class="dropdown">
           <button class="btn btn-outline-secondary dropdown-toggle"
                   type="button"

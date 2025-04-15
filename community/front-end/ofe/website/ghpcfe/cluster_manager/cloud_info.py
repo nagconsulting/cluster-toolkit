@@ -847,11 +847,11 @@ def get_guac_auth_token(credentials_json, project_id, guac_instance):
     return response.json().get("authToken")
 
 
-def get_vnc_server_password(credentials_json, project_id, guac_instance):
+def get_vnc_server_password(credentials_json, project_id, guac_conn):
     """
     Retrieve the password for the VNC server from Secret Manager.
     """
-    secret_name = guac_instance.get_vnc_server_secret_name()
+    secret_name = guac_conn.get_vnc_server_secret_name()
     return get_secret_value(credentials_json, project_id, secret_name)
 
 

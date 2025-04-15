@@ -1,0 +1,12 @@
+---
+- name: Common system configuration
+  include_role:
+    name: vdi_common
+
+- name: Create VDI users
+  include_role:
+    name: vdi_users
+
+- name: Provision Guacamole backend
+  include_role:
+    name: vdi_backend_guacamole

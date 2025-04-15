@@ -60,7 +60,7 @@ class VDIGetPasswordView(SuperUserRequiredMixin, View):
 
     def get(self, request, pk, *args, **kwargs):
         # Retrieve the instance (only GuacamoleInstance for now)
-        conn = get_object_or_404(GuacamoleConnection, pk=connection_id)
+        conn = get_object_or_404(GuacamoleConnection, pk=pk)
         
         # security: optionally confirm that the requesting user 
         # is either a superuser or the same user who owns this connection
@@ -76,16 +76,8 @@ class VDIGetPasswordView(SuperUserRequiredMixin, View):
         password_type = request.GET.get('type', 'vdi_user')
 
         try:
-            # Retrieve cloud credential JSON and project ID from the instance’s cluster.
-            credentials_json = instance.cluster.cloud_credential.detail
-
-            logger.debug("credentials_json: %s", credentials_json)
-
-            cred_dict = json.loads(credentials_json)
-            project_id = cred_dict.get("project_id")
-
             if password_type == "vnc_server":
-                password = cloud_info.get_vnc_server_password(credentials_json, project_id, conn.instance)
+                password = cloud_info.get_vnc_server_password(credentials_json, project_id, conn)
             if password_type == "vdi_user":
                 # we pass the username or the full GuacamoleConnection to the function
                 password = cloud_info.get_vdi_user_password(credentials_json, project_id, conn)

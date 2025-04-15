@@ -22,4 +22,4 @@
   - common
   - dev_env
   - spack_setup
-  - { role: guacamole_vdi, when: enable_guacamole_vdi | bool }
+  - { role: vdi, when: enable_guacamole_vdi | bool }

@@ -383,6 +383,8 @@ class ClusterInfo:
         if self.cluster.enable_guacamole_vdi:
             guac_user_port_map = self._generate_guac_user_port_map()
             guac_user_port_map_json = json.dumps(guac_user_port_map)
+        else:
+            guac_user_port_map_json = "[]"
 
         for templ in ["controller", "login", "compute"]:
             template_fn = template_dir / f"bootstrap_{templ}.sh"

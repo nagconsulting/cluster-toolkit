@@ -2096,12 +2096,6 @@ class GuacamoleInstance(VDIInstance):
     def get_guac_server_secret_name(self):
         return f"guacamole-server-password-{self.cluster.name}-{self.cluster.id}"
 
-    def get_vnc_server_secret_name(self):
-        return f"vnc-server-password-{self.cluster.name}-{self.cluster.id}"
-
-    def get_vdi_user_secret_name(self):
-        return f"vnc-user-password-{self.cluster.name}-{self.cluster.id}"
-
     def __str__(self):
         return f"Guacamole VDI for {self.cluster.name}"
 
@@ -2151,6 +2145,13 @@ class GuacamoleConnection(models.Model):
         """
         cluster = self.instance.cluster
         return f"vnc-user-password-{self.user.username}-{cluster.name}-{cluster.id}"
+
+    def get_vnc_server_secret_name(self):
+        """
+        Returns the secret name for this user's specific VNC server password.
+        """
+        cluster = self.instance.cluster
+        return f"vnc-server-password-{self.user.username}-{cluster.name}-{cluster.id}"
 
     def generate_connection_string(self):
         """

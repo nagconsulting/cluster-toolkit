@@ -34,25 +34,23 @@
     dest: /etc/tigervnc/vncserver.users
     mode: '0644'
 
-- name: Create directories for PostgreSQL data and initialisation scripts
-  file:
-    path: "{{ item }}"
-    state: directory
-  with_items:
-    - /opt/guacamole-db/data
-    - /opt/guacamole-db/initdb
+- name: Copy systemd service
+  copy:
+    src: vncserver@.service
+    dest: /etc/systemd/system/vncserver@.service
+    mode: '0644'
 
-- name: Template per-user SQL for Guacamole connections
-  template:
-    src: connection_bootstrap.sql.j2
-    dest: "/opt/guacamole-db/initdb/user_{{ item.username }}.sql"
+- name: Reload systemd
+  command: systemctl daemon-reload
+
+- name: Enable & start each user's VNC server
+  systemd:
+    name: "vncserver@:{{ item.port - 5900 }}"
+    enabled: yes
+    state: started
   loop: "{{ guac_map }}"
   loop_control:
     loop_var: item
-  vars:
-    username: "{{ item.username }}"
-    port: "{{ item.port }}"
-    vnc_password: "{{ vars['vnc_password_' + item.username] }}"
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -67,6 +65,26 @@
         update_cache: yes
       retries: 10
       delay: 3
+
+    - name: Create directories for PostgreSQL data and initialisation scripts
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - /opt/guacamole-db/data
+        - /opt/guacamole-db/initdb
+
+    - name: Template per-user SQL for Guacamole connections
+      template:
+        src: connection_bootstrap.sql.j2
+        dest: "/opt/guacamole-db/initdb/user_{{ item.username }}.sql"
+      loop: "{{ guac_map }}"
+      loop_control:
+        loop_var: item
+      vars:
+        username: "{{ item.username }}"
+        port: "{{ item.port }}"
+        vnc_password: "{{ vars['vnc_password_' + item.username] }}"
 
     - name: Create a pod for the Guacamole containers
       containers.podman.podman_pod:

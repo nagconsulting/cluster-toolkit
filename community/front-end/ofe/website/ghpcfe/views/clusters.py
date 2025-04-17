@@ -323,8 +323,7 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
         )
 
         if not self.object.use_containers:
-            # ContainerRegistry.objects.filter(cluster=self.object).update(status='d')
-            ContainerRegistry.objects.filter(cluster=self.object).delete()
+            ContainerRegistry.objects.filter(cluster=self.object).update(status='p')
 
         if self.request.POST:
             kwargs["data"] = self.request.POST
@@ -359,35 +358,70 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
         context["container_registry_formset"] = self.get_container_registry_formset()
         return context
 
-    def assign_vnc_ports_for_new_users(self, new_users):
+    def assign_vdi_connections_for_new_users(self, new_users):
         """
-        Helper method that assigns each newly added user a VNC port.
+        Helper method that assigns each newly added user two connections:
+        (1) a VNC (port=590x) connection
+        (2) an SSH (port=22) connection
+
+        Each user gets two sequentially incremented connection IDs:
+        user1 => 1,2
+        user2 => 3,4
+        user3 => 5,6
+        etc.
         """
-        base_port = 5901
-        # The total number of users already authorized (excluding these newly added):
-        already_assigned = self.object.authorised_users.count() - len(new_users)
-        next_port = base_port + already_assigned
+        base_vnc_port = 5901
 
         try:
             vdi_inst = self.object.vdi_instance
         except Cluster.vdi_instance.RelatedObjectDoesNotExist:
-            logger.warning(f"No GuacamoleInstance row exists for cluster {self.object.name}. Skipping port assignment.")
+            logger.warning(
+                f"No GuacamoleInstance row exists for cluster {self.object.name}. "
+                "Skipping port assignment."
+            )
             return
 
-        for i, user in enumerate(new_users):
-            port = next_port + i
-            logger.info(f"Assigning port {port} for user {user.username} on cluster {self.object.name}.")
+        existing_count = GuacamoleConnection.objects.filter(instance=vdi_inst).count()
 
-            # Create a GuacamoleConnection row if cluster has a GuacamoleInstance
-            if self.object.vdi_instance:
-                GuacamoleConnection.objects.create(
-                    instance=vdi_inst,
-                    user=user,
-                    vnc_port=port,
-                    connection_id=str(already_assigned + i + 1),
-                )
-            else:
-                logger.warning(f"No GuacamoleInstance is set for cluster {self.object.name}; skipping creation.")
+        for i, user in enumerate(new_users):
+            vnc_conn_id = existing_count + 1
+            ssh_conn_id = existing_count + 2
+
+            # Decide which VNC port to assign. Keep it simple:
+            # port = base_port + the "user index" across *all* assigned users
+            # Example:
+            #     user #1 => port=5901
+            #     user #2 => port=5902
+            #     etc.
+
+            user_index = vnc_conn_id // 2  # integer division
+
+            vnc_port = base_vnc_port + user_index
+
+            # logger.info(
+            #     f"Assigning VNC connection_id={vnc_conn_id}, port={vnc_port} "
+            #     f"AND SSH connection_id={ssh_conn_id} for user={user.username} "
+            #     f"on cluster={self.object.name}."
+            # )
+
+            # 2) Create the VNC connection
+            GuacamoleConnection.objects.create(
+                instance=vdi_inst,
+                user=user,
+                port=vnc_port,  # 5901, 5902, etc.
+                connection_id=str(vnc_conn_id),
+            )
+
+            # 3) Create the SSH connection
+            GuacamoleConnection.objects.create(
+                instance=vdi_inst,
+                user=user,
+                port=22,
+                connection_id=str(ssh_conn_id),
+            )
+
+            # Move the 'existing_count' by 2 so the next user picks up the next pair
+            existing_count += 2
 
     def form_valid(self, form):
         logger.info("In form_valid")
@@ -533,7 +567,7 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
                 new_authorized = set(self.object.authorised_users.all())
                 newly_added_users = new_authorized - old_authorized
                 if newly_added_users and self.object.enable_guacamole_vdi:
-                    self.assign_vnc_ports_for_new_users(newly_added_users)
+                    self.assign_vdi_connections_for_new_users(newly_added_users)
 
                 # -- (c) Delete any mount points that aren't in the new forms
                 for mp in existing_mount_points:

@@ -65,7 +65,7 @@
 
 - name: Generate password for the Guacamole webserver admin user
   set_fact:
-    guacamole_admin_password: "{{ lookup('community.general.random_string', length=16, special=false) }}"
+    guacamole_admin_password: "{{ lookup('community.general.random_string', length=8, special=false) }}"
 - name: Create a GCP secret for Guacamole server login
   google.cloud.gcp_secret_manager:
     name: "guacamole-server-password-{{ cluster_name }}-{{ cluster_id }}"

@@ -11,11 +11,11 @@
 {% block content %}
 <h2>Virtual Desktop Instances</h2>
 
-{% if vdi_list %}
+{% if rows %}
 <table class="table">
   <thead>
     <tr>
-      <th>ID</th>
+      <th>Instance ID</th>
       <th>Cluster</th>
       <th>VDI Type</th>
       <th>Status</th>
@@ -24,37 +24,33 @@
     </tr>
   </thead>
   <tbody>
-  {% for vdi in vdi_list %}
+    {% for row in rows %}
+    {% with inst=row.instance vnc=row.vnc_conn ssh=row.ssh_conn %}
     <tr>
+      <td>{{ inst.id }}</td>
       <td>
-        {{ vdi.id }}
-      </td>
-      <td>
-        <a href="/cluster/{{ vdi.instance.cluster.id }}">
-          {{ vdi.instance.cluster.name }} (ID: {{ vdi.instance.cluster.id }})
+        <a href="/cluster/{{ inst.cluster.id }}">
+          {{ inst.cluster.name }} (ID: {{ inst.cluster.id }})
         </a>
       </td>
       <td>
-        {{ vdi.instance.vdi_type_name }}
+        {{ inst.vdi_type_name }}
       </td>
       <td>
-        {% if vdi.instance.status == "i" %}
-        <img src="/static/img/loading.gif" style="width:32px;height:32px;">
+        {% if inst.status == "i" %}
+          <img src="{% static 'img/loading.gif' %}" style="width:32px;height:32px;">
+        {% elif inst.status == "r" %}
+          <img src="{% static 'img/status-ready.png' %}" style="width:32px;height:32px;">
+        {% elif inst.status == "n" %}
+          <img src="{% static 'img/status-configured.png' %}" style="width:30px;height:32px;">
+        {% elif inst.status == "d" %}
+          <img src="{% static 'img/status-deleted.png' %}" style="width:30px;height:32px;">
         {% endif %}
-        {% if vdi.instance.status == "r" %}
-        <img src="/static/img/status-ready.png" style="width:32px;height:32px;">
-        {% endif %}
-        {% if vdi.instance.status == "n" %}
-        <img src="/static/img/status-configured.png" style="width:30px;height:32px;">
-        {% endif %}
-        {% if vdi.instance.status == "d" %}
-        <img src="/static/img/status-deleted.png" style="width:30px;height:32px;">
-        {% endif %}
-        {{ vdi.instance.get_status_display }}
+        {{ inst.get_status_display }}
       </td>
       <td>
-        {% if vdi.instance.status == "r" %}
-          <span id="vnc-user-password-{{ vdi.id }}"
+        {% if inst.status == "r" and vnc %}
+          <span id="vnc-user-password-{{ vnc.id }}"
                 style="display: none;"
                 data-loaded="false">
           </span>
@@ -62,9 +58,9 @@
           <div class="btn-group" role="group">
             <button type="button"
                     class="btn btn-outline-secondary"
-                    id="eye-button-{{ vdi.id }}"
-                    onclick="togglePassword('vnc-user-password-{{ vdi.id }}', this)"
-                    data-instance-id="{{ vdi.id }}"
+                    id="eye-button-{{ vnc.id }}"
+                    onclick="togglePassword('vnc-user-password-{{ vnc.id }}', this)"
+                    data-connection-pk="{{ vnc.id }}"
                     data-password-type="vdi_user"
                     title="Show/Hide Password">
               <i class="bi bi-eye"></i>
@@ -72,31 +68,42 @@
       
             <button type="button"
                     class="btn btn-outline-secondary password-display invisible"
-                    id="password-button-{{ vdi.id }}"
+                    id="password-button-{{ vnc.id }}"
                     style="min-width: 6rem;">
             </button>
           </div>
         {% endif %}
-      </td>             
+      </td>
       <td>
-        {% if vdi.instance.vdi_type_name == "Guacamole" and vdi.instance.status == "r" %}
-        <div class="dropdown">
-          <button class="btn btn-outline-secondary dropdown-toggle"
-                  type="button"
-                  id="connectDropdown"
-                  data-toggle="dropdown"
-                  aria-haspopup="true"
-                  aria-expanded="false">
-            Connect
-          </button>
-          <div class="dropdown-menu dropdown-menu-right" aria-labelledby="connectDropdown">
-            <a class="dropdown-item" href="#" onclick="loginGuac('{{ vdi.id }}', '1'); return false;">VDI Connection</a>
-            <a class="dropdown-item" href="#" onclick="loginGuac('{{ vdi.id }}', '2'); return false;">SSH Connection</a>
+        {% if inst.vdi_type_name == "Guacamole" and inst.status == "r" %}
+          <div class="dropdown">
+            <button class="btn btn-outline-secondary dropdown-toggle"
+                    type="button"
+                    id="connectDropdown"
+                    data-toggle="dropdown"
+                    aria-haspopup="true"
+                    aria-expanded="false">
+              Connect
+            </button>
+            <div class="dropdown-menu dropdown-menu-right" aria-labelledby="connectDropdown">
+              {% if vnc %}
+                <a class="dropdown-item" href="#" 
+                   onclick="loginGuac('{{ vnc.id }}'); return false;">
+                  VDI Connection
+                </a>
+              {% endif %}
+              {% if ssh %}
+                <a class="dropdown-item" href="#" 
+                   onclick="loginGuac('{{ ssh.id }}'); return false;">
+                  SSH Connection
+                </a>
+              {% endif %}
+            </div>
           </div>
-        </div>
         {% endif %}
       </td>
     </tr>
+    {% endwith %}
   {% endfor %}
   </tbody>
 </table>
@@ -110,9 +117,9 @@
 {% block tailscript %}
 <script>
   // 1) Helper function to retrieve password from server
-  function retrieveCredential(identifier, credentialType, callback) {
+  function retrieveCredential(connectionPk, credentialType, callback) {
     $.ajax({
-      url: "/backend/vdi-get-password/" + identifier + "/",
+      url: "/backend/vdi-get-password/" + connectionPk + "/",
       data: { type: credentialType },
       method: "GET",
       success: function(response) {
@@ -136,12 +143,12 @@
       return;
     }
 
-    var instanceId = eyeBtn.getAttribute("data-instance-id");
+    var connectionPk = eyeBtn.getAttribute("data-connection-pk");
     var passwordType = eyeBtn.getAttribute("data-password-type");
-    var passwordBtn = document.getElementById("password-button-" + instanceId);
+    var passwordBtn = document.getElementById("password-button-" + connectionPk);
 
     if (!passwordBtn) {
-      console.error("Password button for instance " + instanceId + " not found.");
+      console.error("Password button for connection " + connectionPk + " not found.");
       return;
     }
 
@@ -160,7 +167,7 @@
 
     // If password is not loaded yet, fetch it via AJAX
     if (span.getAttribute("data-loaded") === "false") {
-      retrieveCredential(instanceId, passwordType, function(err, password) {
+      retrieveCredential(connectionPk, passwordType, function(err, password) {
         if (err) {
           console.error(err);
           span.textContent = "Error: " + err;
@@ -171,7 +178,7 @@
 
           // Also place the password in the second button's text
           passwordBtn.textContent = password;
-          
+
           // Remove .invisible to show the password text
           passwordBtn.classList.remove("invisible");
 
@@ -194,18 +201,20 @@
     }
   }
 
-  // 3) Example Guacamole login function (unchanged)
-  function loginGuac(instanceId, connectionId) {
+  // 3) Guacamole login function 
+  function loginGuac(connectionPk) {
     $.ajax({
-      url: "/backend/vdi-get-password/" + instanceId + "/",
-      data: { type: "guac_password", conn: connectionId },
+      url: "/backend/vdi-get-password/" + connectionPk + "/",
+      data: { type: "guac_password" },
       method: "GET",
       success: function(response) {
-        if (response.password && response.connection_string) {
-          var guacUrl = `/guacamole/${instanceId}/#/client/${response.connection_string}/?username=guacadmin&password=${response.password}`;
+        if (response.password && response.connection_string && response.instance_id) {
+          var guacUrl = "/guacamole/" + response.instance_id 
+                        + "/#/client/" + response.connection_string
+                        + "/?username=guacadmin&password=" + response.password;
           window.open(
-            guacUrl, 
-            "GuacWindow", 
+            guacUrl,
+            "GuacWindow",
             "toolbar=no,location=no,directories=no,status=no,menubar=no,scrollbars=no,resizable=yes,width=1920,height=1080"
           );
         } else {

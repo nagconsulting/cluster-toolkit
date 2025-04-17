@@ -1089,6 +1089,7 @@ class ContainerRegistry(models.Model):
     )
 
     REGISTRY_STATUS = (
+        ("p", "Pending"),
         ("n", "Newly created"),
         ("c", "Being created"),
         ("i", "Initialized and awaiting setup"),
@@ -2121,8 +2122,8 @@ class GuacamoleConnection(models.Model):
         on_delete=models.CASCADE,
         help_text="Which Django user this Guac connection is for"
     )
-    # e.g. 5901, 5902, etc. 
-    vnc_port = models.PositiveIntegerField(default=5901)
+    # e.g. 5901, 5902, etc. (or 22 for ssh)
+    port = models.PositiveIntegerField(default=5901)
 
     # This “connection_id” is what Guacamole uses in the URL to identify the connection.
     connection_id = models.CharField(max_length=10, default="1")
@@ -2131,17 +2132,14 @@ class GuacamoleConnection(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        # Ensure a (instance, user) pair is unique 
-        # if you only want one connection per user
-        unique_together = ("instance", "user")
+        unique_together = ("instance", "user", "connection_id")
 
     def __str__(self):
-        return f"GuacConn: user={self.user.username}, port={self.vnc_port}"
+        return f"GuacConn: user={self.user.username}, port={self.port}"
 
     def get_vdi_user_secret_name(self):
         """
-        If you want a unique secret for each user, 
-        you might incorporate the user’s username.
+        Returns the secret name for this user's specific VNC user password.
         """
         cluster = self.instance.cluster
         return f"vnc-user-password-{self.user.username}-{cluster.name}-{cluster.id}"

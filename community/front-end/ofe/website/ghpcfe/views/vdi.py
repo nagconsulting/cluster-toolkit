@@ -6,7 +6,7 @@ from django.views import generic
 from django.conf import settings
 from django.shortcuts import render
 from ..models import GuacamoleInstance, GuacamoleConnection
-from ..permissions import SuperUserRequiredMixin
+from ..permissions import LoginRequiredMixin
 from ..cluster_manager import cloud_info
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.views import View
@@ -16,10 +16,10 @@ from django.shortcuts import get_object_or_404
 logger = logging.getLogger(__name__)
 
 
-class VDIListView(SuperUserRequiredMixin, generic.ListView):
+class VDIListView(LoginRequiredMixin, generic.ListView):
     """
-    Used for a single list view of all VDI instance types (Guacamole, etc.).
-    Only Guac' exists for now...
+    Displays one row per GuacamoleInstance (VDI server).
+    In each row, we show the user's two connections (VDI & SSH).
     """
     template_name = "vdi/list.html"
     context_object_name = "vdi_list"
@@ -30,7 +30,9 @@ class VDIListView(SuperUserRequiredMixin, generic.ListView):
 
         """
         # Example if you only have Guacamole so far:
-        return GuacamoleConnection.objects.filter(user=self.request.user)
+        return GuacamoleInstance.objects.filter(
+            cluster__authorised_users=self.request.user
+        )
 
         # Future: if you have multiple subclasses:
         # from django.db.models import Q
@@ -42,16 +44,38 @@ class VDIListView(SuperUserRequiredMixin, generic.ListView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["navtab"] = "vdi"
 
-        # Only determine if autorefresh is needed
-        loading = any(conn.instance.status in ["n", "i"] for conn in context["vdi_list"])
+        # The GuacamoleInstance objects returned by get_queryset()
+        instance_list = context["vdi_list"]  
+
+        rows = []
+        for inst in instance_list:
+            # Grab all connections for this user & instance:
+            user_conns = inst.connections.filter(user=self.request.user)
+
+            # Determine the protocol by the port number:
+            vnc_conn = user_conns.filter(port__gte=5901).first()
+            ssh_conn = user_conns.filter(port=22).first()
+
+            rows.append({
+                "instance": inst,
+                "vnc_conn": vnc_conn,
+                "ssh_conn": ssh_conn,
+            })
+
+        # This list of dicts holds the instance plus the two connections above
+        context["rows"] = rows
+
+        # For auto-refresh
+        loading = any(inst.status in ["n", "i"] for inst in instance_list)
         context["loading"] = 1 if loading else 0
+
+        context["navtab"] = "vdi"
 
         return context
 
 
-class VDIGetPasswordView(SuperUserRequiredMixin, View):
+class VDIGetPasswordView(LoginRequiredMixin, View):
     """
     Returns the latest VNC password (server or user) for a given VDI instance.
     Accepts a query parameter 'type' with values 'vnc_server' or 'vdi_user'
@@ -85,7 +109,11 @@ class VDIGetPasswordView(SuperUserRequiredMixin, View):
             elif password_type == "guac_password":
                 password = cloud_info.get_guac_admin_password(credentials_json, project_id, conn.instance)
                 encoded_conn = conn.generate_connection_string()
-                return JsonResponse({"password": password, "connection_string": encoded_conn})
+                return JsonResponse({
+                    "password": password,
+                    "connection_string": encoded_conn,
+                    "instance_id": conn.instance.id
+                })
             elif password_type == "auth_token":
                 token = cloud_info.get_guac_auth_token(credentials_json, project_id, conn.instance)
                 password = token

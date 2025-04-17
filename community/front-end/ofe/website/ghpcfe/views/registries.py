@@ -41,6 +41,10 @@ class RegistryListView(LoginRequiredMixin, generic.ListView):
     template_name = "registry/list.html"
     context_object_name = "registry_list"
 
+    def get_queryset(self):
+        # Filter out all registries with pending status == 'p'
+        return super().get_queryset().exclude(status="p")
+
     def get_context_data(self, *args, **kwargs):
         context = super().get_context_data(*args, **kwargs)
         loading = 0

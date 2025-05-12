@@ -1,0 +1,8 @@
+
+- name: "Install TigerVNC"
+  include_tasks: tigervnc.yaml
+  when: vnc_flavor | lower == 'tigervnc'
+
+- name: "Install TightVNC"
+  include_tasks: tightvnc.yaml
+  when: vnc_flavor | lower == 'tightvnc'

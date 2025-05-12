@@ -1,0 +1,15 @@
+---
+- name: Ensure VDI user group exists
+  ansible.builtin.group:
+    name: "{{ vdi_user_group }}"
+    state: present
+
+# Run local‐user provisioning if selected
+- name: Provision local users
+  ansible.builtin.include_tasks: local_users.yaml
+  when: user_provision | lower == 'local_users'
+
+# Run OS Login tasks if selected
+- name: Configure OS Login
+  ansible.builtin.include_tasks: os_login.yaml
+  when: user_provision | lower == 'os_login'

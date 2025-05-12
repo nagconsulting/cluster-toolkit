@@ -1,0 +1,42 @@
+---
+- name: Gather distribution facts
+  ansible.builtin.setup:
+    gather_subset: platform
+
+- name: Set package manager and desktop-packages
+  ansible.builtin.set_fact:
+    # pkg_mgr: "{{ 'yum' if ansible_facts.os_family == 'RedHat' else 'apt' }}"
+    gui_packages: >-
+      {{ ['@Xfce','@base-x']
+         if ansible_facts.os_family == 'RedHat'
+         else ['xfce4','xserver-xorg-core']
+      }}
+    vnc_pkg: >-
+      {{ 'tigervnc-server'
+         if vnc_flavor | lower == 'tigervnc'
+         else 'tightvnc-server'
+      }}
+
+- name: Update repository cache & install EPEL (RedHat only)
+  ansible.builtin.package:
+    name: epel-release
+    state: present
+    update_cache: yes
+  when: ansible_facts.os_family == 'RedHat'
+  retries: 10
+  delay: 3
+
+- name: Install desktop prerequisites & VNC package
+  ansible.builtin.package:
+    name: "{{ gui_packages + [vnc_pkg] }}"
+    state: present
+  retries: 10
+  delay: 3
+
+- name: Ensure Python & tooling are installed
+  ansible.builtin.package:
+    name:
+      - python3
+      - python3-pip
+      - jq
+    state: present

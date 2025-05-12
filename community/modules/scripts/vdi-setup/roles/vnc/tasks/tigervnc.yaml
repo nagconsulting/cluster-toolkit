@@ -1,0 +1,38 @@
+
+---
+# Per-user configuration
+- name: Configure per-user VNC settings
+  include_tasks: vnc_user_config.yaml
+  loop: "{{ vdi_users }}"
+  loop_control:
+    loop_var: item
+  vars:
+    vnc_password: "{{ vars['vnc_password_' + item.username] }}"
+
+# Global VNC users mapping (for systemd service)
+- name: Template VNC users file
+  ansible.builtin.template:
+    src: vncserver.users.j2
+    dest: /etc/tigervnc/vncserver.users
+    mode: '0644'
+
+# Systemd unit
+- name: Deploy vncserver@.service unit file
+  ansible.builtin.copy:
+    src: vncserver@.service
+    dest: /etc/systemd/system/vncserver@.service
+    mode: '0644'
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+# Enable & start each user's VNC server
+- name: Enable & start TigerVNC instances for each user
+  ansible.builtin.systemd:
+    name: "vncserver@:{{ item.port | int - 5900 }}"
+    enabled: yes
+    state: started
+  loop: "{{ guac_map }}"
+  loop_control:
+    loop_var: item

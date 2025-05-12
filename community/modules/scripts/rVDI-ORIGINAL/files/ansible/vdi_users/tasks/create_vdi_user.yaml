@@ -1,0 +1,42 @@
+---
+- name: Generate VDI user password
+  set_fact:
+    vdiuser_password: "{{ lookup('community.general.random_string', length=6, special=false) }}"
+
+- name: Add VDI user password to secret manager
+  google.cloud.gcp_secret_manager:
+    name: "vnc-user-password-{{ item.username }}-{{ cluster_name }}-{{ cluster_id }}"
+    auth_kind: machineaccount
+    state: present
+    project: "{{ gcp_project_id }}"
+    value: "{{ vdiuser_password }}"
+
+- name: Create VDI user {{ item.username }}
+  user:
+    name: "{{ item.username }}"
+    groups: wheel
+    shell: /bin/bash
+    create_home: yes
+    password: "{{ vdiuser_password | password_hash('sha512') }}"
+
+- name: Ensure SSH directory exists
+  file:
+    path: "/home/{{ item.username }}/.ssh"
+    state: directory
+    owner: "{{ item.username }}"
+    group: "{{ vdi_user_group }}"
+    mode: '0700'
+
+- name: Generate SSH key pair for {{ item.username }}
+  community.crypto.openssh_keypair:
+    path: "/home/{{ item.username }}/.ssh/id_rsa"
+    owner: "{{ item.username }}"
+    group: "{{ vdi_user_group }}"
+    mode: '0600'
+  register: ssh_key
+
+- name: Copy public key to authorized_keys
+  authorized_key:
+    user: "{{ item.username }}"
+    state: present
+    key: "{{ ssh_key.public_key }}"

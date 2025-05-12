@@ -1,0 +1,24 @@
+---
+- name: Ensure VNC configuration directory exists
+  ansible.builtin.file:
+    path: "/home/{{ item.username }}/.vnc"
+    state: directory
+    owner: "{{ item.username }}"
+    group: "{{ vdi_user_group }}"
+    mode: '0700'
+
+- name: Set VNC password for {{ item.username }}
+  ansible.builtin.shell: |
+    echo "{{ vnc_password }}" | vncpasswd -f > "/home/{{ item.username }}/.vnc/passwd"
+    chmod 600 "/home/{{ item.username }}/.vnc/passwd"
+  become_user: "{{ item.username }}"
+
+- name: Copy per-user VNC config
+  ansible.builtin.template:
+    src: config.j2
+    dest: "/home/{{ item.username }}/.vnc/config"
+    owner: "{{ item.username }}"
+    group: "{{ vdi_user_group }}"
+    mode: '0644'
+  vars:
+    vdi_resolution: "{{ vdi_resolution }}"

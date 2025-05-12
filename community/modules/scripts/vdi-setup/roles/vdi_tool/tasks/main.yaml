@@ -1,0 +1,12 @@
+
+- name: "Install Guacamole"
+  include_tasks: guacamole.yaml
+  when: vdi_tool | lower == 'guacamole'
+
+- name: "Install NoMachine"
+  include_tasks: nomachine.yaml
+  when: vdi_tool | lower == 'nomachine'
+
+- name: "Install Workspot"
+  include_tasks: workspot.yaml
+  when: vdi_tool | lower == 'workspot'

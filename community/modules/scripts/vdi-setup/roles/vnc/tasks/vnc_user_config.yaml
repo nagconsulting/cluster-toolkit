@@ -7,11 +7,19 @@
     group: "{{ vdi_user_group }}"
     mode: '0700'
 
-- name: Set VNC password for {{ item.username }}
+- name: Write VNC password file for {{ item.username }}
   ansible.builtin.shell: |
     echo "{{ vnc_password }}" | vncpasswd -f > "/home/{{ item.username }}/.vnc/passwd"
-    chmod 600 "/home/{{ item.username }}/.vnc/passwd"
+  args:
+    creates: "/home/{{ item.username }}/.vnc/passwd"
   become_user: "{{ item.username }}"
+
+- name: Fix passwd file permissions
+  ansible.builtin.file:
+    path: "/home/{{ item.username }}/.vnc/passwd"
+    owner: "{{ item.username }}"
+    group: "{{ vdi_user_group }}"
+    mode: '0600'
 
 - name: Copy per-user VNC config
   ansible.builtin.template:

@@ -7,15 +7,22 @@
   ansible.builtin.set_fact:
     # pkg_mgr: "{{ 'yum' if ansible_facts.os_family == 'RedHat' else 'apt' }}"
     gui_packages: >-
-      {{ ['@Xfce','@base-x']
-         if ansible_facts.os_family == 'RedHat'
-         else ['xfce4','xserver-xorg-core']
+      {{ 
+        ['@Xfce','@base-x'] 
+          if ansible_facts.os_family == 'RedHat' 
+        else 
+        ['xfce4','xserver-xorg-core'] 
       }}
     vnc_pkg: >-
-      {{ 'tigervnc-server'
-         if vnc_flavor | lower == 'tigervnc'
-         else 'tightvnc-server'
-      }}
+      {%- if vnc_flavor|lower == 'tigervnc' and ansible_facts.os_family == 'RedHat' -%}
+      tigervnc-server
+      {%- elif vnc_flavor|lower == 'tigervnc' -%}
+      tigervnc-standalone-server
+      {%- elif vnc_flavor|lower == 'tightvnc' and ansible_facts.os_family == 'RedHat' -%}
+      tightvnc-server
+      {%- else -%}
+      tightvnc-standalone-server
+      {%- endif %}
 
 - name: Update repository cache & install EPEL (RedHat only)
   ansible.builtin.package:
@@ -32,6 +39,11 @@
     state: present
   retries: 10
   delay: 3
+
+- name: Ensure requests package is installed
+  pip:
+    name: requests
+    state: present
 
 - name: Ensure Python & tooling are installed
   ansible.builtin.package:

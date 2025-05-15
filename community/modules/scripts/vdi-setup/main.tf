@@ -9,32 +9,33 @@ data "archive_file" "roles_tar" {
   output_path = "${path.module}/roles.tar.gz"
 }
 
-# Generate a fully-flat playbook via templatefile()
+# Render vars file for Ansible
 locals {
-  playbook = templatefile(
-    "${path.module}/templates/playbook.tftpl",
-    {
-      vnc_flavor     = var.vnc_flavor,
-      vdi_tool       = var.vdi_tool,
-      user_provision = var.user_provision,
-      vdi_user_group = var.vdi_user_group,
-      vdi_resolution = var.vdi_resolution,
-      vdi_users      = var.vdi_users,
-      roles          = ["secret_manager", "base_os", "vnc", "vdi_tool", "user_provision"],
-    }
-  )
+  vdi_vars_content = templatefile("${path.module}/templates/vars.yaml.tftpl", {
+    deployment_name = var.deployment_name
+    project_id      = var.project_id
+    user_provision  = var.user_provision
+    vnc_flavor      = var.vnc_flavor
+    vdi_tool        = var.vdi_tool
+    vdi_user_group  = var.vdi_user_group
+    vdi_resolution  = var.vdi_resolution
+    vdi_webapp_port = var.vdi_webapp_port
+    vdi_users       = var.vdi_users
+  })
 }
 
 # Assemble runners
 locals {
   runners = [
     # Install 'google.cloud' collection for 'gcp_secret_manager' role
+    # and other deps
     {
       type        = "shell"
-      destination = "install-collections.sh"
+      destination = "install-deps.sh"
       content     = <<-EOT
         #!/bin/bash
         set -eux
+        /usr/local/ghpc-venv/bin/python3 -m pip install requests google-auth
         ansible-galaxy collection install google.cloud
       EOT
     },
@@ -42,37 +43,41 @@ locals {
     {
       type        = "data"
       source      = data.archive_file.roles_tar.output_path
-      destination = "/tmp/roles.tar.gz"
+      destination = "/tmp/vdi/roles.tar.gz"
     },
 
-    # Unpack into /tmp/roles
+    # Unpack into /tmp/vdi/roles
     {
       type        = "shell"
       destination = "unpack_roles.sh"
       content     = <<-EOT
         #!/bin/bash
         set -eux
-        mkdir -p /tmp/roles
-        tar xzf /tmp/roles.tar.gz -C /tmp/roles
+        mkdir -p /tmp/vdi/roles
+        tar xzf /tmp/vdi/roles.tar.gz -C /tmp/vdi/roles
       EOT
+    },
+
+    # write out vars file as YAML
+    {
+      type        = "data"
+      content     = local.vdi_vars_content
+      destination = "/tmp/vdi/vars.yaml"
     },
 
     # Run the rendered playbook via ansible-local
     {
       type        = "ansible-local"
-      content     = local.playbook
-      destination = "/tmp/install-vdi.yaml"
-      # any extra-vars are appended after the built-in flags:
-      args        = join(" ", [
-        "-e vnc_flavor=${var.vnc_flavor}",
-        "-e vdi_tool=${var.vdi_tool}",
-        "-e user_provision=${var.user_provision}",
-        "-e vdi_user_group=${var.vdi_user_group}",
-        "-e vdi_resolution=${var.vdi_resolution}",
-        "-e vdi_users=${jsonencode(var.vdi_users)}",
-        "-v"
-      ])
+      content     = templatefile("${path.module}/templates/install.yaml.tftpl",
+        {
+          roles           = ["base_os", "secret_manager", "user_provision", "vnc", "vdi_tool"],
+        }
+      )
+      destination = "/tmp/vdi/install.yaml"
+      # Todo: turn off debug '-v' later:
+      args        = "--extra-vars @/tmp/vdi/vars.yaml -v"
     },
+    # Todo: another runner here to delete /tmp/vdi afterwards?
   ]
 
   required_apis = [
@@ -103,6 +108,10 @@ module "startup_script" {
 
   runners         = local.runners
   gcs_bucket_path = "gs://${google_storage_bucket.bucket.name}"
+
+  docker = {
+    enabled = true
+  }
 }
 
 # Expose the combined startup script

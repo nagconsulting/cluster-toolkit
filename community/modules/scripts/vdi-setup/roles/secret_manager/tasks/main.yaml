@@ -5,22 +5,22 @@
     webapp_admin_password: "{{ lookup('community.general.random_string', length=8, special=false) }}"
 - name: Create a GCP secret for webapp server login
   google.cloud.gcp_secret_manager:
-    name: "webapp-server-password-{{ cluster_name }}-{{ cluster_id }}"
+    name: "webapp-server-password-{{ deployment_name }}"
     auth_kind: machineaccount
     state: present
     project: "{{ secret_manager_project }}"
     value: "{{ webapp_admin_password }}"
   register: webapp_secret
-- name: Compute Guacamole admin password hash to save to Guacserver
+- name: Compute Webapp admin password hash to save to Webapp server
   set_fact:
-    guacadmin_hash: "{{ webapp_admin_password | hash('sha256') | upper }}"
+    webapp_admin_hash: "{{ webapp_admin_password | hash('sha256') | upper }}"
 
 - name: Generate random password used for webapp database
   set_fact:
     database_password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
 - name: Add generated database password to Secret Manager
   google.cloud.gcp_secret_manager:
-    name: "db-password-{{ cluster_name }}-{{ cluster_id }}"
+    name: "db-password-{{ deployment_name }}"
     auth_kind: machineaccount
     state: present
     project: "{{ secret_manager_project }}"
@@ -28,54 +28,13 @@
   register: database_secret
 
 # Per-user secret handling
-- name: Generate secrets for user {{ item.username }}
-  block:
-
-    - name: Determine password for {{ item.username }} (blueprint override)
-      ansible.builtin.set_fact:
-        vdiuser_password: "{{ item.password }}"
-      when:
-        - item.password is defined
-
-    - name: Retrieve existing secret for {{ item.username }}
-      google.cloud.gcp_secret_manager:
-        name: "vdi-user-password-{{ item.username }}-{{ cluster_name }}-{{ cluster_id }}"
-        project: "{{ secret_manager_project }}"
-        state: present
-      register: sm_result
-      failed_when: false
-      when: vdiuser_password is not defined
-
-    - name: Use secret-manager value if present
-      ansible.builtin.set_fact:
-        vdiuser_password: "{{ sm_result.value }}"
-      when:
-        - vdiuser_password is not defined
-        - sm_result.value is defined
-
-    - name: Generate new random password for {{ item.username }}
-      ansible.builtin.set_fact:
-        vdiuser_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=12) }}"
-      when: vdiuser_password is not defined
-
-    - name: Create or update Secret Manager entry for {{ item.username }}
-      google.cloud.gcp_secret_manager:
-        name: "vdi-user-password-{{ item.username }}-{{ cluster_name }}-{{ cluster_id }}"
-        project: "{{ secret_manager_project }}"
-        state: present
-        value: "{{ vdiuser_password }}"
-      when:
-        - sm_result.value is not defined
-        - item.password is not defined
-
-    - name: Build enriched user list
-      ansible.builtin.set_fact:
-        vdi_users_updated: >-
-          {{
-            (vdi_users_updated | default([]))
-            + [ item | combine({ 'password': vdiuser_password }) ]
-          }}
-
-  loop: "{{ vdi_users_updated }}"
+- name: Generate per-user secrets and enrich list
+  include_tasks: user_secret_tasks.yaml
+  loop: "{{ vdi_users }}"
   loop_control:
     loop_var: item
+
+- name: Overwrite vdi_users with enriched list
+  ansible.builtin.set_fact:
+    vdi_users: "{{ vdi_users_updated }}"
+  when: vdi_users_updated is defined

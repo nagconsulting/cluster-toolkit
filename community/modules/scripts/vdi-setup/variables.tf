@@ -48,12 +48,22 @@ variable "vdi_resolution" {
   default     = "1920x1080"
 }
 
+variable "vdi_webapp_port" {
+  type        = string
+  description = "Port to serve the Webapp interface from (recommend reverse proxy (ie. nginx container) or LB in front of this?)"
+  default     = "8080"
+}
+
 variable "vdi_users" {
-  description = "List of VDI users, each with username, VNC port, and optional password."
+  description = <<-DOC
+    List of VDI users, each with username, VNC port, and one of: blueprint password OR a Secret Manager secret name.
+    If neither a password or a secret_name is set then a password will be randomly generated and saved.
+  DOC
   type = list(object({
-    username = string
-    port     = number
-    password = optional(string)
+    username    = string
+    port        = number
+    password    = optional(string)
+    secret_name = optional(string)
   }))
   default = []
 }

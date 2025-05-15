@@ -7,9 +7,15 @@
 # Run local‐user provisioning if selected
 - name: Provision local users
   ansible.builtin.include_tasks: local_users.yaml
+  loop: "{{ vdi_users }}"
+  loop_control:
+    loop_var: item
   when: user_provision | lower == 'local_users'
 
 # Run OS Login tasks if selected
-- name: Configure OS Login
+- name: Provision OS Login users
   ansible.builtin.include_tasks: os_login.yaml
+  loop: "{{ vdi_users }}"
+  loop_control:
+    loop_var: item
   when: user_provision | lower == 'os_login'

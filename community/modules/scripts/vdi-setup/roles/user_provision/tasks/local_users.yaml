@@ -33,7 +33,3 @@
         user: "{{ item.username }}"
         key: "{{ ssh_key.public_key }}"
         state: present
-
-  loop: "{{ vdi_users_updated }}"
-  loop_control:
-    loop_var: item

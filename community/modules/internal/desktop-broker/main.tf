@@ -23,7 +23,10 @@ locals {
   # mode that needs it rather than on every desktop host.
   pip_requirements = concat(
     ["aiohttp~=3.10"],
-    local.identity_mode == "iap" ? ["google-auth~=2.35"] : [],
+    # cryptography is a google-auth dependency, but the broker converts IAP's
+    # JWK Set to PEM itself and so imports it directly. Named here rather than
+    # relied on transitively.
+    local.identity_mode == "iap" ? ["google-auth~=2.35", "cryptography"] : [],
   )
 
 

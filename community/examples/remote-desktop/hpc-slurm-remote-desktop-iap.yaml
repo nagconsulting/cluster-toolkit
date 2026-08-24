@@ -54,12 +54,12 @@ vars:
   # to the reserved address, or the Google-managed certificate never leaves
   # PROVISIONING and the load balancer serves errors until it does.
   #
-  #   gcloud compute addresses create vdi --global --ip-version=IPV4
-  #   gcloud compute addresses describe vdi --global --format='value(address)'
+  #   gcloud compute addresses create remote-desktop --global --ip-version=IPV4
+  #   gcloud compute addresses describe remote-desktop --global --format='value(address)'
   #
   # then create an A record for desktop_domain pointing at that address.
   desktop_domain: ## Set the hostname you own here ##
-  desktop_address_name: vdi
+  desktop_address_name: remote-desktop
 
   # Who may reach a desktop. IAP denies everyone else before a request ever
   # arrives at the broker. An empty list locks out even the deployer.
@@ -241,7 +241,7 @@ deployment_groups:
       # The broker resolves the audience from this name at first use. Passing
       # the numeric audience instead would need the backend service to exist
       # before the instance, which it cannot.
-      novnc_iap_backend_service: $(vars.deployment_name)-vdi-backend
+      novnc_iap_backend_service: $(vars.deployment_name)-remote-desktop-viz-backend
       vnc_backend: turbovnc
 
   - id: desktop-lb
@@ -249,26 +249,38 @@ deployment_groups:
     settings:
       project_id: $(vars.project_id)
       deployment_name: $(vars.deployment_name)
-      # Produces backend service "$(vars.deployment_name)-vdi-backend", which is
-      # what novnc_iap_backend_service above refers to.
-      name: vdi
+      # Backend service names are "<deployment>-<name>-<backend>-backend", so
+      # this produces "$(vars.deployment_name)-remote-desktop-viz-backend",
+      # which is what novnc_iap_backend_service above refers to. Spelled out
+      # rather than read from the module's output, because the broker needs it
+      # at boot and reading it back would make the desktop depend on the load
+      # balancer that depends on the desktop.
+      name: remote-desktop
 
-      backend_instances:
-      - zone: $(vars.zone)
-        self_links: $(viz-desktop.self_links)
-      port: $(viz-desktop.novnc_listen_port)
-      port_name: novnc
+      # One pool here. Add another entry with its own `hosts` to serve a
+      # second, different pool - a GPU desktop, say - under the same address
+      # and certificate, reached deterministically by hostname rather than by
+      # session affinity.
+      backend_services:
+      - name: viz
+        instances:
+        - zone: $(vars.zone)
+          self_links: $(viz-desktop.self_links)
+        port: $(viz-desktop.novnc_listen_port)
+        port_name: novnc
 
-      # A desktop session is a WebSocket held open for hours. The Google
-      # default of 30 seconds would close it mid-stream, with nothing in the
-      # broker log to explain why.
-      timeout_sec: 86400
+        # A desktop session is a WebSocket held open for hours. The Google
+        # default of 30 seconds would close it mid-stream, with nothing in the
+        # broker log to explain why.
+        timeout_sec: 86400
 
-      # A user's session lives on one host, so send them back to it.
-      session_affinity: GENERATED_COOKIE
+        # A user's session lives on one host, so send them back to it. Best
+        # effort: with several hosts in one pool, a lapsed cookie lands the
+        # user somewhere holding nothing for them.
+        session_affinity: GENERATED_COOKIE
 
-      health_check:
-        request_path: $(viz-desktop.healthcheck_path)
+        health_check:
+          request_path: $(viz-desktop.healthcheck_path)
 
       network_self_link: $(network.network_self_link)
       target_tags: [$(viz-desktop.network_tag)]

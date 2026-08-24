@@ -18,12 +18,15 @@ Split out so that each identity mode says only which keys to trust and which
 claims to require, and no mode reimplements verification.
 """
 
+import base64
 import json
 import logging
 import time
 import urllib.error
 import urllib.request
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from google.auth import jwt as google_jwt
 
 from ..errors import BrokerError
@@ -40,6 +43,61 @@ def cache_control_max_age(header_value):
             except ValueError:
                 return None
     return None
+
+
+# Curves an EC JWK may name. IAP signs with ES256 (P-256); the others cost
+# nothing to accept and save a puzzling failure if that ever changes.
+_CURVES = {
+    "P-256": ec.SECP256R1,
+    "P-384": ec.SECP384R1,
+    "P-521": ec.SECP521R1,
+}
+
+
+def _b64_uint(value):
+    """Decode a base64url JWK coordinate into an integer."""
+    padding = "=" * (-len(value) % 4)
+    return int.from_bytes(base64.urlsafe_b64decode(value + padding), "big")
+
+
+def _jwk_to_pem(jwk):
+    # Missing fields mean a malformed key, which the caller reports as such.
+    # Only a key that names a curve we do not implement is "unsupported".
+    crv, x, y = jwk["crv"], jwk["x"], jwk["y"]
+    curve = _CURVES.get(crv)
+    if curve is None:
+        raise BrokerError(502, f"Unsupported signing key curve: {crv!r}.")
+    numbers = ec.EllipticCurvePublicNumbers(
+        _b64_uint(x), _b64_uint(y), curve()
+    )
+    return numbers.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def certs_by_key_id(payload):
+    """Normalise a signing-key endpoint's response to {key id: key}.
+
+    google.auth.jwt.decode looks a key up by the token's "kid", so it wants a
+    mapping. Google publishes signing keys in two shapes and only one of them is
+    already that:
+
+      - Google's OIDC certs are {key id: x509 PEM}, used as-is.
+      - IAP publishes a JWK Set, {"keys": [{"kid": ..., "x": ..., "y": ...}]},
+        whose only top-level key is "keys". Passing it through unchanged makes
+        every lookup fail with "Certificate for key id ... not found", however
+        valid the assertion is.
+    """
+    if not isinstance(payload, dict):
+        raise BrokerError(502, "Unexpected signing key response.")
+    keys = payload.get("keys")
+    if keys is None:
+        return payload
+    try:
+        return {key["kid"]: _jwk_to_pem(key) for key in keys}
+    except (KeyError, TypeError, ValueError) as err:
+        raise BrokerError(502, "Could not read signing keys.") from err
 
 
 class KeyStore:
@@ -62,7 +120,9 @@ class KeyStore:
         request = urllib.request.Request(certs_url)
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
-                certs = json.loads(response.read().decode("utf-8"))
+                certs = certs_by_key_id(
+                    json.loads(response.read().decode("utf-8"))
+                )
                 max_age = cache_control_max_age(
                     response.headers.get("Cache-Control")
                 )

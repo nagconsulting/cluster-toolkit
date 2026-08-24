@@ -25,12 +25,43 @@ locals {
   health_check_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
 
   managed_certificate = length(var.domains) > 0
+  iap_oauth_client    = var.oauth2_client_id != null
 
-  # Groups this module creates, plus any the caller already had.
-  created_groups = [for g in google_compute_instance_group.backends : g.self_link]
-  all_groups     = concat(local.created_groups, var.instance_groups)
+  backends = { for b in var.backend_services : b.name => b }
 
-  iap_oauth_client = var.oauth2_client_id != null
+  # The entry with no hosts catches everything the host rules do not.
+  default_backend = one([for b in var.backend_services : b.name if length(b.hosts) == 0])
+  routed_backends = { for b in var.backend_services : b.name => b if length(b.hosts) > 0 }
+
+  # Unmanaged instance groups are zonal, so one per backend service per zone.
+  # Flattened to a single map because for_each takes one collection.
+  instance_groups = merge([
+    for b in var.backend_services : {
+      for i in b.instances : "${b.name}-${i.zone}" => {
+        backend    = b.name
+        zone       = i.zone
+        self_links = i.self_links
+        port_name  = b.port_name
+        port       = b.port
+      }
+    }
+  ]...)
+
+  # Groups this module creates for a backend, plus any the caller already had.
+  groups_for = {
+    for name, b in local.backends : name => concat(
+      [for key, g in google_compute_instance_group.backends : g.self_link if local.instance_groups[key].backend == name],
+      b.instance_groups,
+    )
+  }
+
+  # One firewall rule covering every port any backend serves or is probed on.
+  probe_ports = distinct(flatten([
+    for b in var.backend_services : [
+      tostring(b.port),
+      tostring(coalesce(b.health_check.port, b.port)),
+    ]
+  ]))
 }
 
 ###############################################################################
@@ -53,13 +84,13 @@ resource "terraform_data" "validation" {
     }
 
     precondition {
-      condition     = alltrue([for b in var.backend_instances : can(regex("^[a-z]+-[a-z]+[0-9]+-[a-z]$", b.zone))])
-      error_message = "Every backend_instances entry needs a real zone such as us-central1-a. An unexpanded $(vars.zone) reaches the API as a literal and fails with a 403 naming no cause."
-    }
-
-    precondition {
-      condition     = length(local.all_groups) > 0
-      error_message = "No backends. Set backend_instances, instance_groups, or both."
+      # A hostname routed here but absent from the certificate fails TLS before
+      # routing is ever reached, which looks like a broken load balancer rather
+      # than a missing name.
+      condition = !local.managed_certificate || alltrue(flatten([
+        for b in var.backend_services : [for h in b.hosts : contains(var.domains, h)]
+      ]))
+      error_message = "Every hostname in backend_services hosts must also appear in domains, or requests to it fail TLS before routing is considered."
     }
 
     precondition {
@@ -112,16 +143,16 @@ locals {
 ###############################################################################
 
 resource "google_compute_instance_group" "backends" {
-  for_each = { for b in var.backend_instances : b.zone => b.self_links }
+  for_each = local.instance_groups
 
   project   = var.project_id
   name      = "${local.prefix}-${each.key}"
-  zone      = each.key
-  instances = each.value
+  zone      = each.value.zone
+  instances = each.value.self_links
 
   named_port {
-    name = var.port_name
-    port = var.port
+    name = each.value.port_name
+    port = each.value.port
   }
 
   lifecycle {
@@ -130,67 +161,71 @@ resource "google_compute_instance_group" "backends" {
 }
 
 resource "google_compute_health_check" "lb" {
-  project = var.project_id
-  name    = "${local.prefix}-hc"
+  for_each = local.backends
 
-  check_interval_sec  = var.health_check.check_interval_sec
-  timeout_sec         = var.health_check.timeout_sec
-  healthy_threshold   = var.health_check.healthy_threshold
-  unhealthy_threshold = var.health_check.unhealthy_threshold
+  project = var.project_id
+  name    = "${local.prefix}-${each.key}-hc"
+
+  check_interval_sec  = each.value.health_check.check_interval_sec
+  timeout_sec         = each.value.health_check.timeout_sec
+  healthy_threshold   = each.value.health_check.healthy_threshold
+  unhealthy_threshold = each.value.health_check.unhealthy_threshold
 
   dynamic "http_health_check" {
-    for_each = upper(var.health_check.protocol) == "HTTP" ? [1] : []
+    for_each = upper(each.value.health_check.protocol) == "HTTP" ? [1] : []
     content {
-      port         = coalesce(var.health_check.port, var.port)
-      request_path = var.health_check.request_path
+      port         = coalesce(each.value.health_check.port, each.value.port)
+      request_path = each.value.health_check.request_path
     }
   }
 
   dynamic "https_health_check" {
-    for_each = upper(var.health_check.protocol) == "HTTPS" ? [1] : []
+    for_each = upper(each.value.health_check.protocol) == "HTTPS" ? [1] : []
     content {
-      port         = coalesce(var.health_check.port, var.port)
-      request_path = var.health_check.request_path
+      port         = coalesce(each.value.health_check.port, each.value.port)
+      request_path = each.value.health_check.request_path
     }
   }
 
   dynamic "http2_health_check" {
-    for_each = upper(var.health_check.protocol) == "HTTP2" ? [1] : []
+    for_each = upper(each.value.health_check.protocol) == "HTTP2" ? [1] : []
     content {
-      port         = coalesce(var.health_check.port, var.port)
-      request_path = var.health_check.request_path
+      port         = coalesce(each.value.health_check.port, each.value.port)
+      request_path = each.value.health_check.request_path
     }
   }
 
   dynamic "tcp_health_check" {
-    for_each = upper(var.health_check.protocol) == "TCP" ? [1] : []
+    for_each = upper(each.value.health_check.protocol) == "TCP" ? [1] : []
     content {
-      port = coalesce(var.health_check.port, var.port)
+      port = coalesce(each.value.health_check.port, each.value.port)
     }
   }
 }
 
 resource "google_compute_backend_service" "lb" {
+  for_each = local.backends
+
   project = var.project_id
-  name    = "${local.prefix}-backend"
+  name    = "${local.prefix}-${each.key}-backend"
 
   load_balancing_scheme = "EXTERNAL_MANAGED"
-  protocol              = upper(var.protocol)
-  port_name             = var.port_name
-  health_checks         = [google_compute_health_check.lb.id]
+  protocol              = upper(each.value.protocol)
+  port_name             = each.value.port_name
+  health_checks         = [google_compute_health_check.lb[each.key].id]
 
-  timeout_sec                     = var.timeout_sec
-  session_affinity                = upper(var.session_affinity)
-  affinity_cookie_ttl_sec         = var.affinity_cookie_ttl_sec
-  connection_draining_timeout_sec = var.connection_draining_timeout_sec
-  enable_cdn                      = var.enable_cdn
-  security_policy                 = var.security_policy
+  timeout_sec                     = each.value.timeout_sec
+  session_affinity                = upper(each.value.session_affinity)
+  affinity_cookie_ttl_sec         = each.value.affinity_cookie_ttl_sec
+  connection_draining_timeout_sec = each.value.connection_draining_timeout_sec
+  enable_cdn                      = each.value.enable_cdn
+  security_policy                 = each.value.security_policy
 
   # Iterated as a list rather than a set: group self links are unknown until
   # the instance groups are created, and toset() on unknown values makes the
   # collection itself unknown, which for_each cannot plan over.
   dynamic "backend" {
-    for_each = local.all_groups
+    for_each = local.groups_for[each.key]
     content {
       group = backend.value
     }
@@ -234,7 +269,7 @@ resource "google_compute_firewall" "health_check" {
 
   allow {
     protocol = "tcp"
-    ports    = [tostring(coalesce(var.health_check.port, var.port))]
+    ports    = local.probe_ports
   }
 }
 
@@ -260,27 +295,27 @@ resource "google_compute_managed_ssl_certificate" "lb" {
 resource "google_compute_url_map" "lb" {
   project         = var.project_id
   name            = "${local.prefix}-urlmap"
-  default_service = google_compute_backend_service.lb.id
+  default_service = google_compute_backend_service.lb[local.default_backend].id
 
   dynamic "host_rule" {
-    for_each = { for i, r in var.url_map_rules : i => r }
+    for_each = local.routed_backends
     content {
       hosts        = host_rule.value.hosts
-      path_matcher = "matcher-${host_rule.key}"
+      path_matcher = host_rule.key
     }
   }
 
   dynamic "path_matcher" {
-    for_each = { for i, r in var.url_map_rules : i => r }
+    for_each = local.routed_backends
     content {
-      name            = "matcher-${path_matcher.key}"
-      default_service = path_matcher.value.backend_service
+      name            = path_matcher.key
+      default_service = google_compute_backend_service.lb[path_matcher.key].id
 
       dynamic "path_rule" {
         for_each = length(path_matcher.value.paths) > 0 ? [1] : []
         content {
           paths   = path_matcher.value.paths
-          service = path_matcher.value.backend_service
+          service = google_compute_backend_service.lb[path_matcher.key].id
         }
       }
     }
@@ -350,10 +385,10 @@ resource "google_compute_global_forwarding_rule" "http" {
 ###############################################################################
 
 module "iap_policy" {
-  source = "../../../../modules/iam/iap-policy"
-  count  = var.enable_iap ? 1 : 0
+  source   = "../../../../modules/iam/iap-policy"
+  for_each = var.enable_iap ? local.backends : {}
 
   project_id         = var.project_id
-  backend_service_id = google_compute_backend_service.lb.name
+  backend_service_id = google_compute_backend_service.lb[each.key].name
   iap_members        = var.iap_members
 }

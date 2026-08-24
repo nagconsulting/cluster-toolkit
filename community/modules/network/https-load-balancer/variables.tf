@@ -43,185 +43,148 @@ variable "labels" {
 # Backends
 ###############################################################################
 
-variable "backend_instances" {
+variable "backend_services" {
   description = <<-EOT
-    Instances to serve, grouped by zone. An unmanaged instance group is created
-    per entry. Use this for individual VMs, such as those from the vm-instance
-    module.
+    Pools of servers behind this load balancer, one backend service each.
 
-    A list rather than a map keyed by zone because Cluster Toolkit expands
-    blueprint variables in values but not in mapping keys, so a zone key of
-    $(vars.zone) would reach Terraform unexpanded.
+    One entry is the common case. Use several where the pools are not
+    interchangeable - a CPU and a GPU desktop pool, say - and give each its own
+    hosts so a request reaches the right one deterministically. They share this
+    load balancer's address, certificate and proxy.
+
+    Exactly one entry must have no hosts: it serves anything matching no other
+    rule, and is what a bare visit to the domain reaches.
+
+    Fields that are easy to get wrong:
+
+      timeout_sec       lifetime of a connection, NOT an idle timeout. Anything
+                        serving WebSockets, SSE or long polls must raise it well
+                        above the Google default of 30 seconds, or such a
+                        connection is closed mid-stream roughly every 30 seconds
+                        with nothing logged to explain it.
+      session_affinity  keeps a client returning to the same backend, needed
+                        where a backend holds per-user state its siblings cannot
+                        serve. Best effort: it lapses when the cookie expires or
+                        the client address changes, and the client then reaches
+                        a backend with nothing for it. Where that is not
+                        acceptable, give each pool its own hosts instead.
+      health_check      the path must be reachable without authentication.
+                        Probes come from Google's ranges and bypass IAP, so a
+                        path behind a login check fails every probe and the
+                        backend never serves.
 
     Example:
-      backend_instances:
-      - zone: $(vars.zone)
-        self_links: $(viz-desktop.self_links)
+      backend_services:
+      - name: viz
+        instances:
+        - zone: $(vars.zone)
+          self_links: $(viz-desktop.self_links)
+        port: 6080
+        port_name: novnc
+        timeout_sec: 86400
+        session_affinity: GENERATED_COOKIE
+        health_check:
+          request_path: /healthz
     EOT
   type = list(object({
-    zone       = string
-    self_links = list(string)
+    name = string
+    instances = optional(list(object({
+      zone       = string
+      self_links = list(string)
+    })), [])
+    instance_groups                 = optional(list(string), [])
+    port                            = optional(number, 80)
+    port_name                       = optional(string, "http")
+    protocol                        = optional(string, "HTTP")
+    timeout_sec                     = optional(number, 30)
+    session_affinity                = optional(string, "NONE")
+    affinity_cookie_ttl_sec         = optional(number)
+    connection_draining_timeout_sec = optional(number, 300)
+    enable_cdn                      = optional(bool, false)
+    security_policy                 = optional(string)
+    health_check = optional(object({
+      protocol            = optional(string, "HTTP")
+      port                = optional(number)
+      request_path        = optional(string, "/")
+      check_interval_sec  = optional(number, 10)
+      timeout_sec         = optional(number, 5)
+      healthy_threshold   = optional(number, 2)
+      unhealthy_threshold = optional(number, 3)
+    }), {})
+    hosts = optional(list(string), [])
+    paths = optional(list(string), ["/*"])
   }))
-  default = []
-}
-
-variable "instance_groups" {
-  description = <<-EOT
-    Self links of existing instance groups to serve, managed or unmanaged. Use
-    this for a MIG, for example the self_link output of the mig module. Combined
-    with any groups created from var.backend_instances.
-
-    Each group must expose a named port matching var.port_name.
-    EOT
-  type        = list(string)
-  default     = []
-}
-
-variable "port" {
-  description = "Port on the backends that serves traffic."
-  type        = number
-  default     = 80
-}
-
-variable "port_name" {
-  description = <<-EOT
-    Named port used by the backend service to find var.port on each group.
-    Instance groups created from var.backend_instances are given this name
-    automatically; existing groups in var.instance_groups must already define
-    it.
-    EOT
-  type        = string
-  default     = "http"
-}
-
-variable "protocol" {
-  description = "Protocol the load balancer speaks to the backends."
-  type        = string
-  default     = "HTTP"
 
   validation {
-    condition     = contains(["HTTP", "HTTPS", "HTTP2"], upper(trimspace(var.protocol)))
-    error_message = "protocol must be one of: HTTP, HTTPS, HTTP2."
+    condition     = length(var.backend_services) > 0
+    error_message = "At least one backend service is required."
+  }
+
+  validation {
+    condition     = length(distinct([for b in var.backend_services : b.name])) == length(var.backend_services)
+    error_message = "Each backend_services entry needs a distinct name; it becomes part of the backend service resource name."
+  }
+
+  validation {
+    condition     = alltrue([for b in var.backend_services : can(regex("^[a-z]([-a-z0-9]{0,20}[a-z0-9])?$", b.name))])
+    error_message = "Each backend_services name must be lowercase, up to 22 characters, starting with a letter."
+  }
+
+  validation {
+    condition     = length([for b in var.backend_services : b.name if length(b.hosts) == 0]) == 1
+    error_message = "Exactly one backend_services entry must have no hosts. That one serves anything matching no other rule; without it a bare visit to the domain has nowhere to go, and with two the routing is ambiguous."
+  }
+
+  validation {
+    condition     = alltrue([for b in var.backend_services : length(b.instances) + length(b.instance_groups) > 0])
+    error_message = "Every backend_services entry needs instances, instance_groups, or both."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for b in var.backend_services : [
+        for i in b.instances : can(regex("^[a-z]+-[a-z]+[0-9]+-[a-z]$", i.zone))
+      ]
+    ]))
+    error_message = "Every instances entry needs a real zone such as us-central1-a. An unexpanded zone variable reaches the API as a literal and fails with a 403 naming no cause."
+  }
+
+  validation {
+    condition     = alltrue([for b in var.backend_services : contains(["HTTP", "HTTPS", "HTTP2"], upper(trimspace(b.protocol)))])
+    error_message = "backend_services protocol must be one of: HTTP, HTTPS, HTTP2."
+  }
+
+  validation {
+    condition = alltrue([
+      for b in var.backend_services : contains(
+        ["NONE", "CLIENT_IP", "GENERATED_COOKIE", "HEADER_FIELD", "HTTP_COOKIE"],
+        upper(trimspace(b.session_affinity))
+      )
+    ])
+    error_message = "backend_services session_affinity must be one of: NONE, CLIENT_IP, GENERATED_COOKIE, HEADER_FIELD, HTTP_COOKIE."
+  }
+
+  validation {
+    condition     = alltrue([for b in var.backend_services : contains(["HTTP", "HTTPS", "HTTP2", "TCP"], upper(trimspace(b.health_check.protocol)))])
+    error_message = "backend_services health_check.protocol must be one of: HTTP, HTTPS, HTTP2, TCP."
+  }
+
+  validation {
+    condition     = length(distinct(flatten([for b in var.backend_services : b.hosts]))) == length(flatten([for b in var.backend_services : b.hosts]))
+    error_message = "A hostname may appear in only one backend_services entry."
   }
 }
 
 ###############################################################################
-# Backend behaviour
+# Health check ingress
 ###############################################################################
-
-variable "timeout_sec" {
-  description = <<-EOT
-    How long the load balancer waits on a backend response before giving up.
-
-    This is the whole lifetime of a streamed or upgraded connection, not an idle
-    timeout, so any backend serving WebSockets, server-sent events or long polls
-    must raise it well above the Google default of 30 seconds. Left at the
-    default, such a connection is closed mid-stream roughly every 30 seconds and
-    the backend logs nothing to explain it.
-    EOT
-  type        = number
-  default     = 30
-}
-
-variable "session_affinity" {
-  description = <<-EOT
-    Keeps a client returning to the same backend. Required when a backend holds
-    per-user state that other backends cannot serve, such as an interactive
-    session pinned to one host.
-
-    One of: NONE, CLIENT_IP, GENERATED_COOKIE, HEADER_FIELD, HTTP_COOKIE.
-
-    Affinity is best effort: it lapses when the cookie expires or the client's
-    address changes, and the client then reaches a backend that has no state for
-    it. Where that is not acceptable, route each backend under its own host or
-    path with var.url_map_rules instead.
-    EOT
-  type        = string
-  default     = "NONE"
-
-  validation {
-    condition = contains(
-      ["NONE", "CLIENT_IP", "GENERATED_COOKIE", "HEADER_FIELD", "HTTP_COOKIE"],
-      upper(trimspace(var.session_affinity))
-    )
-    error_message = "session_affinity must be one of: NONE, CLIENT_IP, GENERATED_COOKIE, HEADER_FIELD, HTTP_COOKIE."
-  }
-}
-
-variable "affinity_cookie_ttl_sec" {
-  description = "Lifetime of the affinity cookie when session_affinity is GENERATED_COOKIE. Null uses the Google default."
-  type        = number
-  default     = null
-}
-
-variable "connection_draining_timeout_sec" {
-  description = "How long existing requests may finish after a backend is removed."
-  type        = number
-  default     = 300
-}
-
-variable "enable_cdn" {
-  description = "Serve responses through Cloud CDN. Leave off for dynamic or per-user content."
-  type        = bool
-  default     = false
-}
-
-variable "enable_logging" {
-  description = "Emit load balancer request logs."
-  type        = bool
-  default     = false
-}
-
-variable "logging_sample_rate" {
-  description = "Fraction of requests logged when enable_logging is true, between 0.0 and 1.0."
-  type        = number
-  default     = 1.0
-
-  validation {
-    condition     = var.logging_sample_rate >= 0.0 && var.logging_sample_rate <= 1.0
-    error_message = "logging_sample_rate must be between 0.0 and 1.0."
-  }
-}
-
-variable "security_policy" {
-  description = "Self link of a Cloud Armor security policy to attach to the backend service."
-  type        = string
-  default     = null
-}
-
-###############################################################################
-# Health check
-###############################################################################
-
-variable "health_check" {
-  description = <<-EOT
-    Health check applied to the backends. The path must be reachable without
-    authentication: health probes come from Google's ranges and bypass IAP, so a
-    path behind a login check fails every probe and the backend never serves.
-    EOT
-  type = object({
-    protocol            = optional(string, "HTTP")
-    port                = optional(number)
-    request_path        = optional(string, "/")
-    check_interval_sec  = optional(number, 10)
-    timeout_sec         = optional(number, 5)
-    healthy_threshold   = optional(number, 2)
-    unhealthy_threshold = optional(number, 3)
-  })
-  default = {}
-
-  validation {
-    condition     = contains(["HTTP", "HTTPS", "HTTP2", "TCP"], upper(trimspace(var.health_check.protocol)))
-    error_message = "health_check.protocol must be one of: HTTP, HTTPS, HTTP2, TCP."
-  }
-}
 
 variable "create_health_check_firewall" {
   description = <<-EOT
     Create the ingress rule admitting Google's health check ranges,
-    35.191.0.0/16 and 130.211.0.0/22, to var.port on the tagged instances.
-    Without a rule from these ranges every probe fails. Set false only where an
-    equivalent rule already exists.
+    35.191.0.0/16 and 130.211.0.0/22, to every backend port on the tagged
+    instances. Without a rule from these ranges every probe fails. Set false
+    only where an equivalent rule already exists.
     EOT
   type        = bool
   default     = true
@@ -264,6 +227,9 @@ variable "domains" {
     this load balancer's address, or the certificate stays in PROVISIONING and
     the load balancer serves errors.
 
+    Include every hostname named in backend_services hosts, or requests to those
+    names fail TLS before routing is ever considered.
+
     Mutually exclusive with ssl_certificates. Provisioning typically takes 15 to
     60 minutes on first apply.
     EOT
@@ -289,27 +255,21 @@ variable "enable_http_redirect" {
   default     = true
 }
 
-variable "url_map_rules" {
-  description = <<-EOT
-    Host and path routing to backends other than the default. Use this to give
-    each backend its own hostname or path prefix, which reaches a specific
-    backend deterministically rather than relying on session affinity.
+variable "enable_logging" {
+  description = "Emit load balancer request logs for every backend service."
+  type        = bool
+  default     = false
+}
 
-    Each entry routes its hosts, and optionally specific path prefixes, to the
-    named backend service self link.
+variable "logging_sample_rate" {
+  description = "Fraction of requests logged when enable_logging is true, between 0.0 and 1.0."
+  type        = number
+  default     = 1.0
 
-    Example:
-      url_map_rules = [{
-        hosts           = ["viz1.example.com"]
-        backend_service = module.other_lb.backend_service_id
-      }]
-    EOT
-  type = list(object({
-    hosts           = list(string)
-    backend_service = string
-    paths           = optional(list(string), ["/*"])
-  }))
-  default = []
+  validation {
+    condition     = var.logging_sample_rate >= 0.0 && var.logging_sample_rate <= 1.0
+    error_message = "logging_sample_rate must be between 0.0 and 1.0."
+  }
 }
 
 ###############################################################################
@@ -318,8 +278,8 @@ variable "url_map_rules" {
 
 variable "enable_iap" {
   description = <<-EOT
-    Put Identity-Aware Proxy in front of the backend service, so Google
-    authenticates every request before it reaches a backend and forwards a
+    Put Identity-Aware Proxy in front of every backend service, so Google
+    authenticates each request before it reaches a backend and forwards a
     signed assertion of who the user is.
     EOT
   type        = bool
@@ -348,8 +308,9 @@ variable "oauth2_client_secret" {
 
 variable "iap_members" {
   description = <<-EOT
-    Principals granted roles/iap.httpsResourceAccessor, and so allowed through
-    IAP. For example ["user:someone@example.com", "group:team@example.com"].
+    Principals granted roles/iap.httpsResourceAccessor on every backend service,
+    and so allowed through IAP. For example ["user:someone@example.com",
+    "group:team@example.com"].
 
     Enabling IAP without granting anyone this role locks everyone out,
     including the person who deployed it.

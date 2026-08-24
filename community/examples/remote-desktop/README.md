@@ -74,8 +74,8 @@ Before deploying it:
    Google-managed certificate only validates once the name already resolves.
 
    ```sh
-   gcloud compute addresses create vdi --global --ip-version=IPV4
-   gcloud compute addresses describe vdi --global --format='value(address)'
+   gcloud compute addresses create remote-desktop --global --ip-version=IPV4
+   gcloud compute addresses describe remote-desktop --global --format='value(address)'
    ```
 
 2. Configure the OAuth consent screen for the project, once.

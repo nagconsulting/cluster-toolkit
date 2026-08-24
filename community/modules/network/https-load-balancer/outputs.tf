@@ -41,6 +41,6 @@ output "url" {
 }
 
 output "instance_group_self_links" {
-  description = "Self links of the unmanaged instance groups created from var.instances."
+  description = "Self links of the unmanaged instance groups created from var.backend_instances."
   value       = [for g in google_compute_instance_group.backends : g.self_link]
 }

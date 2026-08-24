@@ -23,8 +23,9 @@ a notebook server, a dashboard.
       deployment_name: $(vars.deployment_name)
       name: vdi
 
-      instances:
-        us-central1-a: $(viz-desktop.self_links)
+      backend_instances:
+      - zone: us-central1-a
+        self_links: $(viz-desktop.self_links)
       port: 6080
       port_name: novnc
 
@@ -142,6 +143,7 @@ including whoever deployed it. The module refuses that configuration.
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_address_name"></a> [address\_name](#input\_address\_name) | Name of an existing global external address to serve on. When null, one is<br/>created for this load balancer.<br/><br/>Reserve the address ahead of the first apply when using a Google-managed<br/>certificate: the certificate only validates once DNS already resolves to the<br/>address, so letting Terraform mint it means the first apply cannot succeed<br/>until a second one. The global-static-ip module can reserve one, or use<br/>gcloud directly. | `string` | `null` | no |
 | <a name="input_affinity_cookie_ttl_sec"></a> [affinity\_cookie\_ttl\_sec](#input\_affinity\_cookie\_ttl\_sec) | Lifetime of the affinity cookie when session\_affinity is GENERATED\_COOKIE. Null uses the Google default. | `number` | `null` | no |
+| <a name="input_backend_instances"></a> [backend\_instances](#input\_backend\_instances) | Instances to serve, grouped by zone. An unmanaged instance group is created<br/>per entry. Use this for individual VMs, such as those from the vm-instance<br/>module.<br/><br/>A list rather than a map keyed by zone because Cluster Toolkit expands<br/>blueprint variables in values but not in mapping keys, so a zone key of<br/>$(vars.zone) would reach Terraform unexpanded.<br/><br/>Example:<br/>  backend\_instances:<br/>  - zone: $(vars.zone)<br/>    self\_links: $(viz-desktop.self\_links) | <pre>list(object({<br/>    zone       = string<br/>    self_links = list(string)<br/>  }))</pre> | `[]` | no |
 | <a name="input_connection_draining_timeout_sec"></a> [connection\_draining\_timeout\_sec](#input\_connection\_draining\_timeout\_sec) | How long existing requests may finish after a backend is removed. | `number` | `300` | no |
 | <a name="input_create_health_check_firewall"></a> [create\_health\_check\_firewall](#input\_create\_health\_check\_firewall) | Create the ingress rule admitting Google's health check ranges,<br/>35.191.0.0/16 and 130.211.0.0/22, to var.port on the tagged instances.<br/>Without a rule from these ranges every probe fails. Set false only where an<br/>equivalent rule already exists. | `bool` | `true` | no |
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Cluster Toolkit deployment name. Used to prefix resource names. | `string` | n/a | yes |
@@ -152,8 +154,7 @@ including whoever deployed it. The module refuses that configuration.
 | <a name="input_enable_logging"></a> [enable\_logging](#input\_enable\_logging) | Emit load balancer request logs. | `bool` | `false` | no |
 | <a name="input_health_check"></a> [health\_check](#input\_health\_check) | Health check applied to the backends. The path must be reachable without<br/>authentication: health probes come from Google's ranges and bypass IAP, so a<br/>path behind a login check fails every probe and the backend never serves. | <pre>object({<br/>    protocol            = optional(string, "HTTP")<br/>    port                = optional(number)<br/>    request_path        = optional(string, "/")<br/>    check_interval_sec  = optional(number, 10)<br/>    timeout_sec         = optional(number, 5)<br/>    healthy_threshold   = optional(number, 2)<br/>    unhealthy_threshold = optional(number, 3)<br/>  })</pre> | `{}` | no |
 | <a name="input_iap_members"></a> [iap\_members](#input\_iap\_members) | Principals granted roles/iap.httpsResourceAccessor, and so allowed through<br/>IAP. For example ["user:someone@example.com", "group:team@example.com"].<br/><br/>Enabling IAP without granting anyone this role locks everyone out,<br/>including the person who deployed it. | `set(string)` | `[]` | no |
-| <a name="input_instance_groups"></a> [instance\_groups](#input\_instance\_groups) | Self links of existing instance groups to serve, managed or unmanaged. Use<br/>this for a MIG, for example the self\_link output of the mig module. Combined<br/>with any groups created from var.instances.<br/><br/>Each group must expose a named port matching var.port\_name. | `list(string)` | `[]` | no |
-| <a name="input_instances"></a> [instances](#input\_instances) | Instances to serve, as a map of zone to a list of instance self links. An<br/>unmanaged instance group is created per zone. Use this for individual VMs,<br/>such as those from the vm-instance module.<br/><br/>Example:<br/>  instances = {<br/>    "us-central1-a" = [module.desktop.self\_links[0]]<br/>  } | `map(list(string))` | `{}` | no |
+| <a name="input_instance_groups"></a> [instance\_groups](#input\_instance\_groups) | Self links of existing instance groups to serve, managed or unmanaged. Use<br/>this for a MIG, for example the self\_link output of the mig module. Combined<br/>with any groups created from var.backend\_instances.<br/><br/>Each group must expose a named port matching var.port\_name. | `list(string)` | `[]` | no |
 | <a name="input_labels"></a> [labels](#input\_labels) | Labels to add to the resources that accept them. | `map(string)` | `{}` | no |
 | <a name="input_logging_sample_rate"></a> [logging\_sample\_rate](#input\_logging\_sample\_rate) | Fraction of requests logged when enable\_logging is true, between 0.0 and 1.0. | `number` | `1` | no |
 | <a name="input_name"></a> [name](#input\_name) | Short name distinguishing this load balancer from others in the same deployment. | `string` | `"lb"` | no |
@@ -161,7 +162,7 @@ including whoever deployed it. The module refuses that configuration.
 | <a name="input_oauth2_client_id"></a> [oauth2\_client\_id](#input\_oauth2\_client\_id) | OAuth client ID for IAP. Leave null to use a Google-managed client, which<br/>needs no client to be created and no redirect URI to be configured.<br/><br/>Supply a client only where the consent screen must be controlled directly.<br/>Its authorised redirect URI is then<br/>https://iap.googleapis.com/v1/oauth/clientIds/CLIENT_ID:handleRedirect | `string` | `null` | no |
 | <a name="input_oauth2_client_secret"></a> [oauth2\_client\_secret](#input\_oauth2\_client\_secret) | OAuth client secret matching oauth2\_client\_id. Required when that is set. | `string` | `null` | no |
 | <a name="input_port"></a> [port](#input\_port) | Port on the backends that serves traffic. | `number` | `80` | no |
-| <a name="input_port_name"></a> [port\_name](#input\_port\_name) | Named port used by the backend service to find var.port on each group.<br/>Instance groups created from var.instances are given this name<br/>automatically; existing groups in var.instance\_groups must already define<br/>it. | `string` | `"http"` | no |
+| <a name="input_port_name"></a> [port\_name](#input\_port\_name) | Named port used by the backend service to find var.port on each group.<br/>Instance groups created from var.backend\_instances are given this name<br/>automatically; existing groups in var.instance\_groups must already define<br/>it. | `string` | `"http"` | no |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | Project in which Google Cloud resources will be created. | `string` | n/a | yes |
 | <a name="input_protocol"></a> [protocol](#input\_protocol) | Protocol the load balancer speaks to the backends. | `string` | `"HTTP"` | no |
 | <a name="input_security_policy"></a> [security\_policy](#input\_security\_policy) | Self link of a Cloud Armor security policy to attach to the backend service. | `string` | `null` | no |
@@ -179,7 +180,7 @@ including whoever deployed it. The module refuses that configuration.
 | <a name="output_backend_service_id"></a> [backend\_service\_id](#output\_backend\_service\_id) | Full resource ID of the backend service. |
 | <a name="output_backend_service_name"></a> [backend\_service\_name](#output\_backend\_service\_name) | Name of the backend service. A workload verifying IAP assertions needs this<br/>to resolve the audience they are minted for. |
 | <a name="output_backend_service_self_link"></a> [backend\_service\_self\_link](#output\_backend\_service\_self\_link) | Self link of the backend service, for use in another load balancer's url\_map\_rules. |
-| <a name="output_instance_group_self_links"></a> [instance\_group\_self\_links](#output\_instance\_group\_self\_links) | Self links of the unmanaged instance groups created from var.instances. |
+| <a name="output_instance_group_self_links"></a> [instance\_group\_self\_links](#output\_instance\_group\_self\_links) | Self links of the unmanaged instance groups created from var.backend\_instances. |
 | <a name="output_ip_address"></a> [ip\_address](#output\_ip\_address) | External IP address the load balancer serves on. Point DNS here. |
 | <a name="output_url"></a> [url](#output\_url) | HTTPS URL of the load balancer, using the first configured domain where there is one. |
 <!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->

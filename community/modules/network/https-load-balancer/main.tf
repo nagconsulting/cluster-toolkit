@@ -53,8 +53,13 @@ resource "terraform_data" "validation" {
     }
 
     precondition {
+      condition     = alltrue([for b in var.backend_instances : can(regex("^[a-z]+-[a-z]+[0-9]+-[a-z]$", b.zone))])
+      error_message = "Every backend_instances entry needs a real zone such as us-central1-a. An unexpanded $(vars.zone) reaches the API as a literal and fails with a 403 naming no cause."
+    }
+
+    precondition {
       condition     = length(local.all_groups) > 0
-      error_message = "No backends. Set instances, instance_groups, or both."
+      error_message = "No backends. Set backend_instances, instance_groups, or both."
     }
 
     precondition {
@@ -107,7 +112,7 @@ locals {
 ###############################################################################
 
 resource "google_compute_instance_group" "backends" {
-  for_each = var.instances
+  for_each = { for b in var.backend_instances : b.zone => b.self_links }
 
   project   = var.project_id
   name      = "${local.prefix}-${each.key}"

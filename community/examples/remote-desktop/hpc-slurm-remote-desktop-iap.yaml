@@ -253,8 +253,9 @@ deployment_groups:
       # what novnc_iap_backend_service above refers to.
       name: vdi
 
-      instances:
-        $(vars.zone): $(viz-desktop.self_links)
+      backend_instances:
+      - zone: $(vars.zone)
+        self_links: $(viz-desktop.self_links)
       port: $(viz-desktop.novnc_listen_port)
       port_name: novnc
 

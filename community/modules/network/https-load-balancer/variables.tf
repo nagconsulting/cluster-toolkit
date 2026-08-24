@@ -43,26 +43,33 @@ variable "labels" {
 # Backends
 ###############################################################################
 
-variable "instances" {
+variable "backend_instances" {
   description = <<-EOT
-    Instances to serve, as a map of zone to a list of instance self links. An
-    unmanaged instance group is created per zone. Use this for individual VMs,
-    such as those from the vm-instance module.
+    Instances to serve, grouped by zone. An unmanaged instance group is created
+    per entry. Use this for individual VMs, such as those from the vm-instance
+    module.
+
+    A list rather than a map keyed by zone because Cluster Toolkit expands
+    blueprint variables in values but not in mapping keys, so a zone key of
+    $(vars.zone) would reach Terraform unexpanded.
 
     Example:
-      instances = {
-        "us-central1-a" = [module.desktop.self_links[0]]
-      }
+      backend_instances:
+      - zone: $(vars.zone)
+        self_links: $(viz-desktop.self_links)
     EOT
-  type        = map(list(string))
-  default     = {}
+  type = list(object({
+    zone       = string
+    self_links = list(string)
+  }))
+  default = []
 }
 
 variable "instance_groups" {
   description = <<-EOT
     Self links of existing instance groups to serve, managed or unmanaged. Use
     this for a MIG, for example the self_link output of the mig module. Combined
-    with any groups created from var.instances.
+    with any groups created from var.backend_instances.
 
     Each group must expose a named port matching var.port_name.
     EOT
@@ -79,7 +86,7 @@ variable "port" {
 variable "port_name" {
   description = <<-EOT
     Named port used by the backend service to find var.port on each group.
-    Instance groups created from var.instances are given this name
+    Instance groups created from var.backend_instances are given this name
     automatically; existing groups in var.instance_groups must already define
     it.
     EOT

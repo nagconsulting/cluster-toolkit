@@ -22,6 +22,19 @@ output "instance_name" {
   value       = var.instance_count > 0 ? module.instances.name[0] : null
 }
 
+output "self_links" {
+  description = <<-EOT
+    Self links of the desktop instances, for use as load balancer backends.
+    Pass to the https-load-balancer module's instances variable, keyed by zone.
+    EOT
+  value       = module.instances.self_link
+}
+
+output "network_tag" {
+  description = "Network tag applied to the desktop instances, for targeting firewall rules at them."
+  value       = local.remote_desktop_tag
+}
+
 output "internal_ip" {
   description = "Internal IP addresses of created desktop instances."
   value       = module.instances.internal_ip

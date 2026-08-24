@@ -18,6 +18,14 @@ locals {
   vnc_backend     = lower(trimspace(var.vnc_backend))
   identity_mode   = lower(trimspace(var.identity_mode))
 
+  # Verifying an IAP assertion means checking an ES256 signature against IAP's
+  # JWK set, which google-auth already does correctly. Installed only for the
+  # mode that needs it rather than on every desktop host.
+  pip_requirements = concat(
+    ["aiohttp~=3.10"],
+    local.identity_mode == "iap" ? ["google-auth~=2.35"] : [],
+  )
+
 
   broker_dir          = "/etc/ghpc-desktop-broker"
   broker_config_path  = "${local.broker_dir}/config.json"
@@ -211,6 +219,8 @@ locals {
     base_display_number          = var.vnc_display_number
     gpu_acceleration             = var.enable_gpu_acceleration
     identity_mode                = local.identity_mode
+    identity_audience            = var.identity_audience == null ? "" : var.identity_audience
+    iap_backend_service          = var.iap_backend_service == null ? "" : var.iap_backend_service
     listen_host                  = "0.0.0.0"
     listen_port                  = var.broker_listen_port
     log_dir                      = local.broker_log_dir
@@ -255,6 +265,7 @@ locals {
           broker_listen_port  = var.broker_listen_port
           requires_units      = local.requires_units
           read_secret_sh      = local.read_secret_sh
+          pip_requirements    = local.pip_requirements
 
           proxy_secret_id      = var.proxy_secret_id == null ? "" : var.proxy_secret_id
           proxy_secret_version = var.proxy_secret_version
@@ -318,8 +329,28 @@ resource "terraform_data" "input_validation" {
 
   lifecycle {
     precondition {
-      condition     = (var.proxy_secret == null) != (var.proxy_secret_id == null)
+      # Under iap the assertion authenticates the request, so a secret is
+      # optional there and leaving it out keeps the value out of the load
+      # balancer's request headers. Every other mode has nothing else to go on.
+      condition     = local.identity_mode == "iap" || (var.proxy_secret == null) != (var.proxy_secret_id == null)
       error_message = "Set exactly one of proxy_secret or proxy_secret_id. Prefer proxy_secret_id, which keeps the value out of Terraform state and out of the startup script staged in Cloud Storage; use proxy_secret where the caller already holds the plaintext anyway."
+    }
+
+    precondition {
+      condition     = local.identity_mode != "iap" || !(var.proxy_secret != null && var.proxy_secret_id != null)
+      error_message = "Set at most one of proxy_secret or proxy_secret_id."
+    }
+
+    precondition {
+      # Without an audience an assertion minted for any other IAP-protected
+      # service in any project would verify here, so this is not optional.
+      condition     = local.identity_mode != "iap" || var.identity_audience != null || var.iap_backend_service != null
+      error_message = "identity_mode=iap requires identity_audience or iap_backend_service, so the assertion audience can be checked. Prefer iap_backend_service: the backend service name is known in Terraform, while its numeric ID is not created until the load balancer exists."
+    }
+
+    precondition {
+      condition     = local.identity_mode == "iap" || (var.identity_audience == null && var.iap_backend_service == null)
+      error_message = "identity_audience and iap_backend_service apply only when identity_mode is iap."
     }
 
 

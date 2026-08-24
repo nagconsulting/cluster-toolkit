@@ -30,9 +30,11 @@ module "desktop_broker" {
   max_user_sessions            = var.max_user_sessions
   session_idle_timeout_seconds = var.session_idle_timeout_seconds
 
-  broker_listen_port = var.novnc_listen_port
-  novnc_version      = var.novnc_version
-  identity_mode      = var.novnc_identity_mode
+  broker_listen_port  = var.novnc_listen_port
+  novnc_version       = var.novnc_version
+  identity_mode       = var.novnc_identity_mode
+  identity_audience   = var.novnc_identity_audience
+  iap_backend_service = var.novnc_iap_backend_service
 
   secret_project_id    = var.secret_project_id
   proxy_secret         = var.novnc_proxy_secret

@@ -31,6 +31,8 @@ module "novnc_runtime" {
   install_root                 = var.install_root
   max_user_sessions            = var.max_user_sessions
   novnc_identity_mode          = var.novnc_identity_mode
+  novnc_identity_audience      = var.novnc_identity_audience
+  novnc_iap_backend_service    = var.novnc_iap_backend_service
   novnc_listen_port            = var.novnc_listen_port
   secret_project_id            = var.secret_project_id
   novnc_proxy_secret           = var.novnc_proxy_secret

@@ -51,17 +51,23 @@ find "$broker_app_dir" -type f -name '*.py' -exec chmod 0644 {} +
 
 python3 -m venv "$broker_venv_dir"
 "$broker_pip_path" install --upgrade pip
-"$broker_pip_path" install 'aiohttp~=3.10'
+%{ for requirement in pip_requirements ~}
+"$broker_pip_path" install ${jsonencode(requirement)}
+%{ endfor ~}
 
 
 # ---------------------------------------------------------------- secrets
 # The staged config carries no secrets; they are fetched here and merged in
 # before the broker is ever started. Passed through the environment rather than
 # argv so they do not appear in "ps" output.
+# Under IAP the assertion authenticates the request, so a shared secret is
+# optional; with neither configured there is nothing to fetch.
 if [ -n "$proxy_secret_b64" ]; then
   GHPC_PROXY_SECRET="$(printf '%s' "$proxy_secret_b64" | base64 -d)"
-else
+elif [ -n "$proxy_secret_id" ]; then
   GHPC_PROXY_SECRET="$(read_secret "$proxy_secret_id" "$proxy_secret_version")"
+else
+  GHPC_PROXY_SECRET=""
 fi
 export GHPC_PROXY_SECRET
 
@@ -75,7 +81,11 @@ config_path = sys.argv[1]
 with open(config_path, encoding="utf-8") as handle:
     config = json.load(handle)
 
-config["proxy_secret"] = os.environ["GHPC_PROXY_SECRET"]
+secret = os.environ.get("GHPC_PROXY_SECRET", "")
+if secret:
+    config["proxy_secret"] = secret
+else:
+    config.pop("proxy_secret", None)
 
 temp_path = config_path + ".tmp"
 with open(temp_path, "w", encoding="utf-8") as handle:

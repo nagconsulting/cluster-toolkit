@@ -22,7 +22,7 @@ user tries to open a desktop.
 import json
 from pathlib import Path
 
-IDENTITY_MODES = frozenset({"trusted_proxy"})
+IDENTITY_MODES = frozenset({"trusted_proxy", "iap"})
 
 
 class ConfigError(ValueError):
@@ -50,8 +50,6 @@ class Config:
         self.log_dir = Path(raw["log_dir"])
         self.runtime_dir = Path(raw["runtime_dir"])
 
-        self.proxy_secret = _require(raw.get("proxy_secret"), "proxy_secret")
-
         self.identity_mode = (
             str(raw.get("identity_mode") or "trusted_proxy").strip().lower()
         )
@@ -59,6 +57,33 @@ class Config:
             raise ConfigError(
                 f"Unsupported identity_mode: {self.identity_mode!r}. Expected "
                 f"one of: {', '.join(sorted(IDENTITY_MODES))}."
+            )
+
+        # The shared secret is what proves a request came through the intended
+        # front end. Under iap the assertion proves that cryptographically and
+        # names the backend service it was minted for, so the secret is
+        # optional there; every other mode has nothing else to go on and must
+        # have one.
+        self.proxy_secret = str(raw.get("proxy_secret") or "").strip()
+        if not self.proxy_secret and self.identity_mode != "iap":
+            raise ConfigError(
+                f"proxy_secret is required for identity_mode="
+                f"{self.identity_mode!r}."
+            )
+
+        # IAP assertions are minted for one backend service. Verifying without
+        # the matching audience would accept an assertion issued for any other
+        # IAP-protected service in any project, so one of these is mandatory.
+        self.identity_audience = str(raw.get("identity_audience") or "").strip()
+        self.iap_backend_service = str(
+            raw.get("iap_backend_service") or ""
+        ).strip()
+        if self.identity_mode == "iap" and not (
+            self.identity_audience or self.iap_backend_service
+        ):
+            raise ConfigError(
+                "identity_mode=iap requires identity_audience or "
+                "iap_backend_service, so the assertion audience can be checked."
             )
 
         self.listen_host = raw.get("listen_host", "0.0.0.0")

@@ -12,27 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Establishing who is asking.
+"""Deciding which user a request belongs to.
 
-One module per trust model, each returning the same identity shape. Adding a
-model means adding a module and an entry in _RESOLVERS - nothing else in the
+Each trust model lives in its own module and returns the same shape, so adding
+one means adding a module and an entry in _RESOLVERS - nothing else in the
 broker changes.
-
-Named rather than living in a package __init__: gcluster embeds these modules
-with go:embed, which silently skips files whose names start with an underscore,
-so an __init__.py would never reach a deployed host.
 """
 
 import hmac
 import logging
 
 from ..errors import BrokerError
-from . import trusted_proxy
+from . import iap, jwt, trusted_proxy
 
 LOG = logging.getLogger("ghpc-desktop-broker")
 
 _RESOLVERS = {
     "trusted_proxy": trusted_proxy.resolve,
+    "iap": iap.resolve,
 }
 
 # Headers the broker reads. Named once here so the set is auditable.
@@ -41,6 +38,7 @@ HEADERS = {
     "email": "X-Cluster-Desktop-Email",
     "login_uid": "X-Cluster-Desktop-Login-Uid",
     "username": "X-Cluster-Desktop-Username",
+    "iap_assertion": "x-goog-iap-jwt-assertion",
 }
 
 
@@ -58,6 +56,8 @@ class Resolver:
     def __init__(self, config):
         self.config = config
         self._resolve = _RESOLVERS[config.identity_mode]
+        self._key_store = None
+        self._audience = None
 
         if config.identity_mode == "trusted_proxy":
             LOG.warning(
@@ -67,11 +67,30 @@ class Resolver:
                 "broker."
             )
 
+        if config.identity_mode == "iap":
+            self._key_store = jwt.KeyStore()
+            self._audience = iap.AudienceResolver(config)
+
     def resolve(self, presented):
-        """Verify the shared secret, then apply the configured trust model."""
-        if not hmac.compare_digest(
-            presented["secret"].encode("utf-8"),
-            self.config.proxy_secret.encode("utf-8"),
-        ):
-            raise BrokerError(403, "Missing or invalid desktop proxy secret.")
+        """Verify the shared secret where one is set, then apply the mode.
+
+        The secret proves a request arrived through the intended front end. In
+        iap mode the assertion proves that cryptographically and names the
+        backend service it was minted for, so the secret is optional there and
+        omitting it keeps the value out of the load balancer's configuration.
+        """
+        if self.config.proxy_secret:
+            if not hmac.compare_digest(
+                presented["secret"].encode("utf-8"),
+                self.config.proxy_secret.encode("utf-8"),
+            ):
+                raise BrokerError(403, "Missing or invalid desktop proxy secret.")
+
+        if self.config.identity_mode == "iap":
+            return self._resolve(
+                presented,
+                self.config,
+                self._key_store,
+                audience_resolver=self._audience,
+            )
         return self._resolve(presented, self.config)

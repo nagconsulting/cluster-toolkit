@@ -98,18 +98,53 @@ variable "broker_listen_port" {
 
 variable "identity_mode" {
   description = <<-EOT
-    How the broker establishes which user a request belongs to. Only
-    "trusted_proxy" is supported: the identity is taken from request headers
-    with no verification, so it is only safe where an authenticating proxy is
-    the sole route to the broker.
+    How the broker establishes which user a request belongs to.
+
+    "trusted_proxy" takes the identity from request headers with no
+    verification, so it is only safe where an authenticating proxy is the sole
+    route to the broker.
+
+    "iap" verifies the assertion Identity-Aware Proxy signs onto every request
+    it forwards, checking signature, issuer and audience. Nothing is trusted on
+    the caller's word, so the broker may be reached directly without becoming
+    impersonatable.
     EOT
   type        = string
   default     = "trusted_proxy"
 
   validation {
-    condition     = contains(["trusted_proxy"], lower(trimspace(var.identity_mode)))
-    error_message = "identity_mode must be trusted_proxy."
+    condition     = contains(["trusted_proxy", "iap"], lower(trimspace(var.identity_mode)))
+    error_message = "identity_mode must be one of: trusted_proxy, iap."
   }
+}
+
+variable "identity_audience" {
+  description = <<-EOT
+    Audience an IAP assertion must carry, of the form
+    /projects/PROJECT_NUMBER/global/backendServices/BACKEND_ID.
+
+    The audience is the security boundary: without it an assertion minted for
+    any other IAP-protected service in any project would verify here. Set this
+    or iap_backend_service when identity_mode is "iap".
+    EOT
+  type        = string
+  default     = null
+}
+
+variable "iap_backend_service" {
+  description = <<-EOT
+    Name of the backend service fronting this host, from which the broker
+    resolves the expected audience through the Compute API at first use.
+
+    Use this rather than identity_audience to avoid a dependency cycle: the
+    audience contains the backend service's numeric ID, which does not exist
+    until the load balancer is built, while the load balancer needs the
+    instances. The name is chosen in Terraform, so it is known in advance.
+
+    The instance service account needs roles/compute.viewer to read it.
+    EOT
+  type        = string
+  default     = null
 }
 
 variable "secret_project_id" {

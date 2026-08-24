@@ -57,6 +57,46 @@ offloads GL only through `-rendernode`, which needs a DRM render node that GCE's
 NVIDIA images never create. Without a usable GPU the session falls back to
 software rendering rather than failing, and the broker logs why at startup.
 
+## Reaching desktops through Identity-Aware Proxy
+
+`hpc-slurm-remote-desktop-iap.yaml` puts the visualisation desktop behind a
+Google-managed HTTPS load balancer with IAP, so it is reachable at a hostname in
+a browser with no tunnel and no proxy to run locally. Google authenticates every
+request and forwards a signed assertion, which the broker verifies.
+
+The login-node desktop in that blueprint stays on the tunnel: its instances are
+created inside the Slurm controller module, so there is no instance group to
+attach to a backend service.
+
+Before deploying it:
+
+1. Reserve a global address and point DNS at it. Do this first - a
+   Google-managed certificate only validates once the name already resolves.
+
+   ```sh
+   gcloud compute addresses create vdi --global --ip-version=IPV4
+   gcloud compute addresses describe vdi --global --format='value(address)'
+   ```
+
+2. Configure the OAuth consent screen for the project, once.
+
+3. Set `desktop_domain`, `desktop_address_name` and `desktop_iap_members` in the
+   blueprint.
+
+Certificate provisioning takes roughly 15 to 60 minutes on the first apply, and
+the load balancer serves errors until it finishes. Check progress with:
+
+```sh
+gcloud compute ssl-certificates list --global \
+  --format='value(name,managed.status,managed.domainStatus)'
+```
+
+Under IAP the blueprint sets no shared secret. The assertion authenticates the
+request cryptographically and names the backend service it was minted for, so a
+secret would add configuration surface without adding security - and injecting
+one would mean putting it in the load balancer's request headers, and so into
+Terraform state.
+
 ## Getting Started
 
 Before you start, make sure your prerequisites and dependencies are set up:

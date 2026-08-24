@@ -164,18 +164,45 @@ variable "novnc_proxy_secret_version" {
 
 variable "novnc_identity_mode" {
   description = <<-EOT
-    How the desktop broker establishes which user a request belongs to. Only
-    "trusted_proxy" is supported: the identity is taken from request headers
-    with no verification, so it is only safe where an authenticating proxy is
-    the sole route to the broker.
+    How the desktop broker establishes which user a request belongs to.
+
+    "trusted_proxy" takes the identity from request headers with no
+    verification, so it is only safe where an authenticating proxy is the sole
+    route to the broker.
+
+    "iap" verifies the assertion Identity-Aware Proxy signs onto every request
+    it forwards, checking signature, issuer and audience. Set
+    novnc_iap_backend_service alongside it.
     EOT
   type        = string
   default     = "trusted_proxy"
 
   validation {
-    condition     = contains(["trusted_proxy"], lower(trimspace(var.novnc_identity_mode)))
-    error_message = "novnc_identity_mode must be trusted_proxy."
+    condition     = contains(["trusted_proxy", "iap"], lower(trimspace(var.novnc_identity_mode)))
+    error_message = "novnc_identity_mode must be one of: trusted_proxy, iap."
   }
+}
+
+variable "novnc_identity_audience" {
+  description = <<-EOT
+    Audience an IAP assertion must carry, of the form
+    /projects/PROJECT_NUMBER/global/backendServices/BACKEND_ID. Set this or
+    novnc_iap_backend_service when novnc_identity_mode is "iap".
+    EOT
+  type        = string
+  default     = null
+}
+
+variable "novnc_iap_backend_service" {
+  description = <<-EOT
+    Name of the backend service fronting this host. The broker resolves the
+    expected IAP audience from it through the Compute API at first use, which
+    avoids the dependency cycle the numeric audience would create.
+
+    The instance service account needs roles/compute.viewer.
+    EOT
+  type        = string
+  default     = null
 }
 
 variable "desktop_endpoint_dir" {

@@ -17,8 +17,11 @@ terraform {
 
   required_providers {
     google = {
-      source  = "hashicorp/google"
-      version = ">= 4.42"
+      source = "hashicorp/google"
+      # Matches the floor gcluster writes into every generated deployment
+      # (pkg/config/expand.go). The IAP block's optional OAuth client, used for
+      # a Google-managed client, needs a 6.x provider.
+      version = ">= 6.9.0"
     }
   }
 }

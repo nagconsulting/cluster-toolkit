@@ -134,6 +134,14 @@ class VNCBackend:
             f":{session['display_number']}",
             "-geometry",
             self.session_resolution,
+            # Named explicitly because the backends disagree about the default:
+            # TigerVNC reads ~/.vnc/xstartup, TurboVNC reads its own
+            # xstartup.turbovnc and ignores ours entirely. Left implicit, a
+            # TurboVNC desktop silently skips everything the broker puts in that
+            # file - sourcing /etc/profile, the session environment, and the
+            # session command itself.
+            "-xstartup",
+            f"{session['home_dir']}/.vnc/xstartup",
             *self.transport_args(session),
         ]
         render_node = gpu.first_render_node()

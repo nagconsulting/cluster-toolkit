@@ -23,7 +23,11 @@ import pytest
 
 from desktop_broker.backends import registry as backends
 
-SESSION = {"display_number": 1, "vnc_socket": "/run/x/1/vnc.sock"}
+SESSION = {
+    "display_number": 1,
+    "vnc_socket": "/run/x/1/vnc.sock",
+    "home_dir": "/home/someone",
+}
 
 
 def make(name):
@@ -102,3 +106,27 @@ def test_glx_disabled_when_no_render_node(monkeypatch):
 
 def test_session_command_is_the_xfce_desktop():
     assert make("tigervnc").session_command() == ["dbus-launch", "startxfce4"]
+
+
+@pytest.mark.parametrize("backend_name", ["tigervnc", "turbovnc"])
+def test_start_command_names_the_xstartup_explicitly(backend_name):
+    """Both backends must run the xstartup the broker writes.
+
+    TigerVNC defaults to ~/.vnc/xstartup, TurboVNC to its own
+    xstartup.turbovnc. Left implicit, a TurboVNC desktop skipped everything the
+    broker puts in that file - sourcing /etc/profile, the session environment
+    and the session command - and nothing failed loudly enough to notice.
+    """
+    from desktop_broker.backends import registry
+
+    backend = registry.create(backend_name, "1920x1080")
+    session = {
+        "display_number": 1,
+        "home_dir": "/home/someone",
+        "home_dir": "/home/someone",
+        "vnc_socket": "/run/ghpc-remote-desktop/1000/vnc.sock",
+        "slot": 0,
+    }
+    command = backend.start_command(session)
+    assert "-xstartup" in command
+    assert command[command.index("-xstartup") + 1] == "/home/someone/.vnc/xstartup"

@@ -52,8 +52,9 @@ variable "backend_services" {
     hosts so a request reaches the right one deterministically. They share this
     load balancer's address, certificate and proxy.
 
-    Exactly one entry must have no hosts: it serves anything matching no other
-    rule, and is what a bare visit to the domain reaches.
+    Exactly one entry must set default = true. That one serves anything matching
+    no other rule, including a bare visit to the load balancer's own address. It
+    may still have hosts of its own.
 
     Fields that are easy to get wrong:
 
@@ -111,8 +112,9 @@ variable "backend_services" {
       healthy_threshold   = optional(number, 2)
       unhealthy_threshold = optional(number, 3)
     }), {})
-    hosts = optional(list(string), [])
-    paths = optional(list(string), ["/*"])
+    hosts   = optional(list(string), [])
+    paths   = optional(list(string), ["/*"])
+    default = optional(bool, false)
   }))
 
   validation {
@@ -131,8 +133,8 @@ variable "backend_services" {
   }
 
   validation {
-    condition     = length([for b in var.backend_services : b.name if length(b.hosts) == 0]) == 1
-    error_message = "Exactly one backend_services entry must have no hosts. That one serves anything matching no other rule; without it a bare visit to the domain has nowhere to go, and with two the routing is ambiguous."
+    condition     = length([for b in var.backend_services : b.name if b.default]) == 1
+    error_message = "Exactly one backend_services entry must set default = true. That one serves anything matching no other rule; without it a bare visit to the load balancer has nowhere to go, and with two the routing is ambiguous."
   }
 
   validation {
@@ -247,6 +249,40 @@ variable "ssl_policy" {
   description = "Self link of an SSL policy constraining TLS versions and ciphers. Null uses the Google default."
   type        = string
   default     = null
+}
+
+variable "root_redirect" {
+  description = <<-EOT
+    Sends the root path of the named hostnames somewhere else, as a 302.
+
+    Use it to make a hostname a landing page rather than a service: the root
+    redirects to the given path, and every other path on that hostname still
+    reaches its backend normally.
+
+    The hostnames need no backend_services entry of their own - they are served
+    by whichever backend the redirect points into - but each must appear in
+    domains, like any other name.
+
+    Example:
+      root_redirect:
+        hosts: [desktops.example.com]
+        path: /desktops
+    EOT
+  type = object({
+    hosts = list(string)
+    path  = string
+  })
+  default = null
+
+  validation {
+    condition     = var.root_redirect == null || startswith(try(var.root_redirect.path, ""), "/")
+    error_message = "root_redirect.path must start with \"/\"."
+  }
+
+  validation {
+    condition     = var.root_redirect == null || length(try(var.root_redirect.hosts, [])) > 0
+    error_message = "root_redirect.hosts must name at least one hostname."
+  }
 }
 
 variable "enable_http_redirect" {

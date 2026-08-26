@@ -29,8 +29,11 @@ locals {
 
   backends = { for b in var.backend_services : b.name => b }
 
-  # The entry with no hosts catches everything the host rules do not.
-  default_backend = one([for b in var.backend_services : b.name if length(b.hosts) == 0])
+  root_redirect_hosts = var.root_redirect == null ? [] : var.root_redirect.hosts
+
+  # One pool catches everything the host rules do not. It may also own
+  # hostnames of its own, so this is a flag rather than an absence of hosts.
+  default_backend = one([for b in var.backend_services : b.name if b.default])
   routed_backends = { for b in var.backend_services : b.name => b if length(b.hosts) > 0 }
 
   # Unmanaged instance groups are zonal, so one per backend service per zone.
@@ -91,6 +94,22 @@ resource "terraform_data" "validation" {
         for b in var.backend_services : [for h in b.hosts : contains(var.domains, h)]
       ]))
       error_message = "Every hostname in backend_services hosts must also appear in domains, or requests to it fail TLS before routing is considered."
+    }
+
+    precondition {
+      condition = !local.managed_certificate || alltrue([
+        for h in local.root_redirect_hosts : contains(var.domains, h)
+      ])
+      error_message = "Every hostname in root_redirect.hosts must also appear in domains, or requests to it fail TLS before the redirect is reached."
+    }
+
+    precondition {
+      # A hostname cannot both redirect its root and route to its own pool.
+      condition = length(setintersection(
+        toset(local.root_redirect_hosts),
+        toset(flatten([for b in var.backend_services : b.hosts])),
+      )) == 0
+      error_message = "A hostname in root_redirect.hosts also appears in a backend_services entry's hosts. Choose one: a landing page, or a pool of its own."
     }
 
     precondition {
@@ -305,6 +324,32 @@ resource "google_compute_url_map" "lb" {
     }
   }
 
+  dynamic "host_rule" {
+    for_each = length(local.root_redirect_hosts) > 0 ? [1] : []
+    content {
+      hosts        = local.root_redirect_hosts
+      path_matcher = local.root_redirect_matcher
+    }
+  }
+
+  dynamic "path_matcher" {
+    for_each = length(local.root_redirect_hosts) > 0 ? [1] : []
+    content {
+      name            = local.root_redirect_matcher
+      default_service = google_compute_backend_service.lb[local.default_backend].id
+
+      path_rule {
+        # Exact "/" only, so assets and other paths still reach the backend.
+        paths = ["/"]
+        url_redirect {
+          path_redirect          = var.root_redirect.path
+          redirect_response_code = "FOUND"
+          strip_query            = false
+        }
+      }
+    }
+  }
+
   dynamic "path_matcher" {
     for_each = local.routed_backends
     content {
@@ -320,6 +365,12 @@ resource "google_compute_url_map" "lb" {
       }
     }
   }
+}
+
+locals {
+  # Redirected hosts share one matcher; its default service keeps other paths
+  # on that hostname working.
+  root_redirect_matcher = "root-redirect"
 }
 
 resource "google_compute_target_https_proxy" "lb" {

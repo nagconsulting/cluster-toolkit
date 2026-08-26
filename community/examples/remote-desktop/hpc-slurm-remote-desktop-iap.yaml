@@ -63,7 +63,11 @@ vars:
   desktop_domain: ## Set the hostname you own here ##
   # A second pool with its own name. Both must resolve to the load
   # balancer's address, and both go on the certificate.
-  cpu_desktop_domain: ## Set a second hostname, e.g. cpu.<desktop_domain> ##
+  # The bare domain is the landing page: its root redirects to the chooser.
+  # Each desktop has a hostname of its own. All must resolve to the load
+  # balancer's address and all go on the certificate.
+  viz_domain: ## e.g. viz.<desktop_domain> ##
+  cpu_desktop_domain: ## e.g. cpu.<desktop_domain> ##
   desktop_address_name: remote-desktop
 
   # Served by every desktop host, so the list is reachable wherever a
@@ -71,7 +75,7 @@ vars:
   desktop_index_path: /desktops
   desktop_index:
   - name: Visualisation
-    url: https://$(vars.desktop_domain)
+    url: https://$(vars.viz_domain)
     description: GPU capable, TurboVNC
   - name: General purpose
     url: https://$(vars.cpu_desktop_domain)
@@ -306,6 +310,10 @@ deployment_groups:
       # session affinity is only best effort.
       backend_services:
       - name: viz
+        # Exactly one entry catches whatever matches no host rule. It may still
+        # own a hostname, so this is a flag rather than an absence of hosts.
+        default: true
+        hosts: [$(vars.viz_domain)]
         instances:
         - zone: $(vars.zone)
           self_links: $(viz-desktop.self_links)
@@ -343,7 +351,16 @@ deployment_groups:
       address_name: $(vars.desktop_address_name)
       # Every hostname routed above must be on the certificate, or requests
       # to it fail TLS before routing is ever considered.
-      domains: [$(vars.desktop_domain), $(vars.cpu_desktop_domain)]
+      domains:
+      - $(vars.desktop_domain)
+      - $(vars.viz_domain)
+      - $(vars.cpu_desktop_domain)
+
+      # The bare domain serves the chooser rather than a desktop. Every other
+      # path on it still reaches the default pool.
+      root_redirect:
+        hosts: [$(vars.desktop_domain)]
+        path: $(vars.desktop_index_path)
 
       enable_iap: true
       iap_members: $(vars.desktop_iap_members)

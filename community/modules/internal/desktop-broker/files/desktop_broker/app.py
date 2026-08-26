@@ -31,6 +31,7 @@ from .novnc import NoVncFrontend
 from .sessions.lifecycle import SessionManager
 from .sessions.store import SessionStore
 from .sessions.userenv import UserEnvironment
+from . import index as desktop_index
 
 LOG = logging.getLogger("ghpc-desktop-broker")
 
@@ -111,6 +112,32 @@ class Broker:
         # needs to know the broker is up without holding the proxy secret.
         return web.Response(text="ok\n")
 
+    async def handle_index(self, request):
+        """List the desktops this user can reach.
+
+        Authenticated like any other request - the listing names hosts, and an
+        unauthenticated caller has no business reading it - but deliberately
+        without starting a session. Someone deciding which desktop they want
+        should not have an Xvnc process spawned for them on whichever host
+        happened to serve the page.
+        """
+        try:
+            resolved = await self.authenticate(request)
+            return web.Response(
+                text=desktop_index.render(
+                    self.config.desktop_index, resolved.get("email", "")
+                ),
+                content_type="text/html",
+            )
+        except BrokerError as err:
+            return web.Response(status=err.status, text=f"{err.message}\n")
+        except Exception:
+            LOG.exception("Unhandled desktop broker failure")
+            return web.Response(
+                status=500,
+                text="The desktop broker encountered an unexpected error.\n",
+            )
+
     async def handle(self, request):
         try:
             resolved = await self.authenticate(request)
@@ -131,6 +158,9 @@ def build(config):
     app = web.Application()
     app["desktop_broker"] = broker
     app.router.add_get("/healthz", broker.handle_health)
+    # Before the catch-all, which would otherwise mint a session for this path.
+    if config.desktop_index_path:
+        app.router.add_get(config.desktop_index_path, broker.handle_index)
     app.router.add_route("*", "/{path:.*}", broker.handle)
 
     async def on_startup(app):

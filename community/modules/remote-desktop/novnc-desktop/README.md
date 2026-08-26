@@ -66,6 +66,21 @@ only safe where the proxy is the sole route to the broker port. See the
 For OFE-managed access, keep `enable_public_ips` disabled and use OFE as the
 only public HTTPS entrypoint.
 
+## Several pools in one deployment
+
+`name_prefix` defaults to `desktop`, so two instances of this module in the same
+deployment both ask for `<deployment>-desktop-0`, and the second fails with a
+409 `alreadyExists`. Give each pool its own prefix:
+
+```yaml
+  - id: viz-desktop
+    settings:
+      name_prefix: viz
+  - id: cpu-desktop
+    settings:
+      name_prefix: cpu
+```
+
 <!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements
 
@@ -122,6 +137,8 @@ only public HTTPS entrypoint.
 | <a name="input_network_interfaces"></a> [network\_interfaces](#input\_network\_interfaces) | Explicit network interfaces. If set, network\_self\_link and subnetwork\_self\_link are ignored by the VM module. | <pre>list(object({<br/>    network            = string,<br/>    subnetwork         = string,<br/>    subnetwork_project = string,<br/>    network_ip         = string,<br/>    nic_type           = string,<br/>    stack_type         = string,<br/>    queue_count        = number,<br/>    access_config = list(object({<br/>      nat_ip                 = string,<br/>      public_ptr_domain_name = string,<br/>      network_tier           = string<br/>    })),<br/>    ipv6_access_config = list(object({<br/>      public_ptr_domain_name = string,<br/>      network_tier           = string<br/>    })),<br/>    alias_ip_range = list(object({<br/>      ip_cidr_range         = string,<br/>      subnetwork_range_name = string<br/>    }))<br/>  }))</pre> | `[]` | no |
 | <a name="input_network_self_link"></a> [network\_self\_link](#input\_network\_self\_link) | The self link of the network to attach the VM. | `string` | `"default"` | no |
 | <a name="input_network_storage"></a> [network\_storage](#input\_network\_storage) | An array of network attached storage mounts to be configured. | <pre>list(object({<br/>    server_ip             = string<br/>    remote_mount          = string<br/>    local_mount           = string<br/>    fs_type               = string<br/>    mount_options         = string<br/>    client_install_runner = map(string)<br/>    mount_runner          = map(string)<br/>  }))</pre> | `[]` | no |
+| <a name="input_novnc_desktop_index"></a> [novnc\_desktop\_index](#input\_novnc\_desktop\_index) | Desktops to list on the chooser page, each with a name and the URL that<br/>reaches it. Every host serves the same list, so a user finds it wherever<br/>they land. | <pre>list(object({<br/>    name        = string<br/>    url         = string<br/>    description = optional(string, "")<br/>  }))</pre> | `[]` | no |
+| <a name="input_novnc_desktop_index_path"></a> [novnc\_desktop\_index\_path](#input\_novnc\_desktop\_index\_path) | Path at which the chooser is served, for example "/desktops". Empty disables it. | `string` | `""` | no |
 | <a name="input_novnc_iap_backend_service"></a> [novnc\_iap\_backend\_service](#input\_novnc\_iap\_backend\_service) | Name of the backend service fronting this host. The broker resolves the<br/>expected IAP audience from it through the Compute API at first use, which<br/>avoids the dependency cycle the numeric audience would create.<br/><br/>The instance service account needs roles/compute.viewer. | `string` | `null` | no |
 | <a name="input_novnc_identity_audience"></a> [novnc\_identity\_audience](#input\_novnc\_identity\_audience) | Audience an IAP assertion must carry, of the form<br/>/projects/PROJECT\_NUMBER/global/backendServices/BACKEND\_ID. Set this or<br/>novnc\_iap\_backend\_service when novnc\_identity\_mode is "iap". | `string` | `null` | no |
 | <a name="input_novnc_identity_mode"></a> [novnc\_identity\_mode](#input\_novnc\_identity\_mode) | How the desktop broker establishes which user a request belongs to.<br/><br/>"trusted\_proxy" takes the identity from request headers with no<br/>verification, so it is only safe where an authenticating proxy is the sole<br/>route to the broker.<br/><br/>"iap" verifies the assertion Identity-Aware Proxy signs onto every request<br/>it forwards, checking signature, issuer and audience. Set<br/>novnc\_iap\_backend\_service alongside it. | `string` | `"trusted_proxy"` | no |

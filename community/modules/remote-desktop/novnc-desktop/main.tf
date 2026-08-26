@@ -33,6 +33,8 @@ module "novnc_runtime" {
   novnc_identity_mode          = var.novnc_identity_mode
   novnc_identity_audience      = var.novnc_identity_audience
   novnc_iap_backend_service    = var.novnc_iap_backend_service
+  novnc_desktop_index          = var.novnc_desktop_index
+  novnc_desktop_index_path     = var.novnc_desktop_index_path
   novnc_listen_port            = var.novnc_listen_port
   secret_project_id            = var.secret_project_id
   novnc_proxy_secret           = var.novnc_proxy_secret

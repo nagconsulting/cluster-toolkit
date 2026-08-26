@@ -205,6 +205,26 @@ variable "novnc_iap_backend_service" {
   default     = null
 }
 
+variable "novnc_desktop_index" {
+  description = <<-EOT
+    Desktops to list on the chooser page, each with a name and the URL that
+    reaches it. Every host serves the same list, so a user finds it wherever
+    they land.
+    EOT
+  type = list(object({
+    name        = string
+    url         = string
+    description = optional(string, "")
+  }))
+  default = []
+}
+
+variable "novnc_desktop_index_path" {
+  description = "Path at which the chooser is served, for example \"/desktops\". Empty disables it."
+  type        = string
+  default     = ""
+}
+
 variable "desktop_endpoint_dir" {
   description = "Optional directory where the runtime publishes DESKTOP_* endpoint metadata for service discovery."
   type        = string

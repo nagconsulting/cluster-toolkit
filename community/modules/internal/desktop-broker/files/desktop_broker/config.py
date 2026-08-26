@@ -110,6 +110,23 @@ class Config:
 
         self.novnc_dir = Path(_require(raw.get("novnc_dir"), "novnc_dir")).resolve()
 
+        # A list of the desktops this deployment offers, served as a chooser.
+        # Empty, or a path of "", disables it entirely.
+        self.desktop_index = list(raw.get("desktop_index") or [])
+        self.desktop_index_path = str(
+            raw.get("desktop_index_path") or ""
+        ).strip()
+        if self.desktop_index_path and not self.desktop_index_path.startswith("/"):
+            raise ConfigError(
+                f"desktop_index_path must start with '/': "
+                f"{self.desktop_index_path!r}."
+            )
+        if self.desktop_index_path == "/healthz":
+            raise ConfigError(
+                "desktop_index_path cannot be /healthz, which the broker "
+                "serves unauthenticated for load balancer probes."
+            )
+
     def display_number(self, slot):
         return self.base_display_number + int(slot)
 

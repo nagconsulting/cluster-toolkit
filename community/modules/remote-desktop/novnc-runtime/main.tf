@@ -35,6 +35,8 @@ module "desktop_broker" {
   identity_mode       = var.novnc_identity_mode
   identity_audience   = var.novnc_identity_audience
   iap_backend_service = var.novnc_iap_backend_service
+  desktop_index       = var.novnc_desktop_index
+  desktop_index_path  = var.novnc_desktop_index_path
 
   secret_project_id    = var.secret_project_id
   proxy_secret         = var.novnc_proxy_secret

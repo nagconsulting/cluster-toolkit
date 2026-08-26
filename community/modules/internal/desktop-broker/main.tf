@@ -236,6 +236,9 @@ locals {
 
     novnc_dir = local.novnc_dir
 
+    desktop_index      = var.desktop_index
+    desktop_index_path = var.desktop_index_path
+
     # proxy_secret and json_secret_key are deliberately absent: the install
     # runner fetches them on the instance and merges them in before the broker
     # starts. Putting them here would place them in Terraform state and in the
@@ -356,17 +359,26 @@ resource "terraform_data" "input_validation" {
       error_message = "identity_audience and iap_backend_service apply only when identity_mode is iap."
     }
 
+    precondition {
+      # "/" is the desktop itself, so a chooser there would displace it.
+      condition     = var.desktop_index_path != "/"
+      error_message = "desktop_index_path cannot be \"/\": that is where the desktop is served. Use a distinct path such as \"/desktops\"."
+    }
 
+    precondition {
+      condition     = var.desktop_index_path == "" || startswith(var.desktop_index_path, "/")
+      error_message = "desktop_index_path must start with \"/\"."
+    }
 
-
-
+    precondition {
+      condition     = length(var.desktop_index) == 0 || var.desktop_index_path != ""
+      error_message = "desktop_index is set but desktop_index_path is empty, so the list would never be served. Set a path such as \"/desktops\"."
+    }
 
     precondition {
       condition     = var.vnc_display_number >= 1
       error_message = "vnc_display_number must be at least 1. Display :0 is reserved for a physical console."
     }
-
-
 
   }
 }

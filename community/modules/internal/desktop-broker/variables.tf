@@ -194,6 +194,41 @@ variable "novnc_version" {
   default     = "1.7.0"
 }
 
+variable "desktop_index" {
+  description = <<-EOT
+    Desktops to list on the chooser page, each with a name and the URL that
+    reaches it. Served by every host, so a user finds the list wherever they
+    land rather than depending on one host staying up.
+
+    Build it from the load balancer's own backend services, so the page cannot
+    advertise a desktop that was never deployed.
+
+    Example:
+      desktop_index:
+      - name: Visualisation
+        url: https://viz.example.com
+        description: GPU accelerated
+    EOT
+  type = list(object({
+    name        = string
+    url         = string
+    description = optional(string, "")
+  }))
+  default = []
+}
+
+variable "desktop_index_path" {
+  description = <<-EOT
+    Path at which the chooser is served, for example "/desktops". Empty
+    disables it.
+
+    Must not be "/", which is where the desktop itself is served, and cannot be
+    "/healthz", which is deliberately unauthenticated for load balancer probes.
+    EOT
+  type        = string
+  default     = ""
+}
+
 variable "desktop_endpoint_dir" {
   description = "Optional directory where the runtime publishes DESKTOP_* endpoint metadata."
   type        = string

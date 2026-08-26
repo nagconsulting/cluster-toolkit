@@ -38,6 +38,7 @@ md_toc github examples/README.md | sed -e "s/\s-\s/ * /"
   * [hpc-build-slurm-image.yaml](#hpc-build-slurm-imageyaml--) ![community-badge] ![experimental-badge]
   * [hpc-slurm-ubuntu2204.yaml](#hpc-slurm-ubuntu2204yaml-) ![community-badge]
   * [hpc-slurm-remote-desktop.yaml](#hpc-slurm-remote-desktopyaml--) ![community-badge] ![experimental-badge]
+  * [hpc-slurm-remote-desktop-iap.yaml](#hpc-slurm-remote-desktop-iapyaml--) ![community-badge] ![experimental-badge]
   * [hpc-amd-slurm.yaml](#hpc-amd-slurmyaml-) ![community-badge]
   * [hpc-slurm-sharedvpc.yaml](#hpc-slurm-sharedvpcyaml--) ![community-badge] ![experimental-badge]
   * [client-google-cloud-storage.yaml](#client-google-cloud-storageyaml--) ![community-badge] ![experimental-badge]
@@ -961,6 +962,35 @@ the user. The blueprint does not expose it publicly: see the
 [hpc-slurm-remote-desktop.yaml]: ../community/examples/remote-desktop/hpc-slurm-remote-desktop.yaml
 [remote desktop README]: ../community/examples/remote-desktop/README.md
 [noVNC]: https://novnc.com/
+
+### [hpc-slurm-remote-desktop-iap.yaml] ![community-badge] ![experimental-badge]
+
+The same desktops as [hpc-slurm-remote-desktop.yaml], reached at a hostname in a
+browser rather than over a tunnel.
+
+An HTTPS load balancer with [Identity-Aware Proxy] fronts the desktops, so
+Google authenticates every request before it reaches the cluster and forwards a
+signed assertion the broker verifies. There is no shared secret: nothing is
+trusted on the caller's word.
+
+Each pool of desktops has its own hostname, and the bare domain is a landing
+page listing them. Adding a pool is one more entry in the load balancer's
+`backend_services`.
+
+Before deploying, reserve a global external address and point DNS at it, and
+configure the project's OAuth consent screen. A Google-managed certificate only
+validates once its names already resolve, so the address has to exist first.
+Both the [remote desktop README] and the
+[https-load-balancer module](../community/modules/network/https-load-balancer/README.md)
+cover the details.
+
+Grant the same principals `roles/compute.osLogin` as well as IAP access: IAP
+decides who reaches the broker, OS Login decides who has an account once they
+do, and granting only the first means sign-in succeeds and the desktop then
+refuses.
+
+[hpc-slurm-remote-desktop-iap.yaml]: ../community/examples/remote-desktop/hpc-slurm-remote-desktop-iap.yaml
+[Identity-Aware Proxy]: https://cloud.google.com/iap/docs/concepts-overview
 
 ### [hpc-amd-slurm.yaml] ![community-badge]
 

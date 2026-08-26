@@ -93,6 +93,21 @@ class UserEnvironment:
             "if [ -r /etc/profile ]; then\n"
             "  . /etc/profile || true\n"
             "fi\n"
+            # xfce-polkit autostarts and immediately fails here: identifying its
+            # polkit subject needs a systemd-logind session, and a desktop
+            # started by runuser from a service has none. It cannot work in this
+            # context, so starting it only produces a CRITICAL on every login.
+            # Suppressed per user rather than system-wide, so anyone who does
+            # have a use for it can delete the override.
+            "polkit_override=\"$HOME/.config/autostart/xfce-polkit.desktop\"\n"
+            "if [ ! -e \"$polkit_override\" ]; then\n"
+            "  mkdir -p \"$HOME/.config/autostart\" && cat >\"$polkit_override\" <<'EOF_POLKIT'\n"
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=xfce-polkit\n"
+            "Hidden=true\n"
+            "EOF_POLKIT\n"
+            "fi\n"
             f"{exports}"
             f"exec {argv}\n"
         )

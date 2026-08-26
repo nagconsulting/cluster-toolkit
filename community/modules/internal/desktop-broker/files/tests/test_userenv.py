@@ -107,3 +107,26 @@ def test_run_as_builds_a_runuser_invocation(env, monkeypatch):
     assert "USER=alice" in command
     assert "X=1" in command
     assert command[-1] == "id"
+
+
+def test_xstartup_suppresses_the_polkit_agent(tmp_path):
+    """xfce-polkit cannot register without a logind session.
+
+    A desktop started by runuser from a service has none, so the agent fails
+    with a CRITICAL on every login. Suppress it rather than let every user see
+    an error for something that cannot work here.
+    """
+    from desktop_broker.sessions.userenv import UserEnvironment
+
+    class Backend:
+        def session_environment(self):
+            return {}
+
+        def session_command(self):
+            return ["xfce4-session"]
+
+    contents = UserEnvironment(tmp_path, Backend()).xstartup_contents()
+    assert "autostart/xfce-polkit.desktop" in contents
+    assert "Hidden=true" in contents
+    # Written only when absent, so a user can re-enable it by deleting theirs.
+    assert 'if [ ! -e "$polkit_override" ]' in contents

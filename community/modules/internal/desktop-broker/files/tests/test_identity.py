@@ -19,8 +19,13 @@ identity is taken from headers. What is tested is the secret comparison and
 which inputs are allowed to influence the answer.
 """
 
+import os
+import subprocess
+import sys
+import textwrap
+
 import pytest
-from conftest import base_config
+from conftest import FILES_DIR, base_config
 
 from desktop_broker.identity import resolver as identity
 from desktop_broker.config import Config
@@ -88,3 +93,47 @@ def test_trusted_proxy_derives_a_username_when_absent(tmp_path):
     config = Config(base_config(tmp_path))
     resolved = trusted_proxy.resolve(presented(email="a.b@example.com"), config)
     assert resolved["username_hint"] == "a_b_example_com"
+
+
+def test_trusted_proxy_does_not_need_the_iap_dependencies():
+    """A trusted_proxy broker must import with only its own dependencies.
+
+    main.tf installs google-auth and cryptography only for identity_mode=iap,
+    so importing the iap backend eagerly made a trusted_proxy broker crash on
+    startup for packages it was deliberately never given.
+
+    Run in a subprocess with those packages blocked. Doing it in-process cannot
+    work: this suite has already imported the backends, and "from . import iap"
+    is satisfied by the attribute already set on the parent package, so the
+    import never re-runs and the test would pass against the very bug it exists
+    to catch.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+        from importlib.abc import MetaPathFinder
+
+        class Blocked(MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname.split(".")[0] in {"cryptography", "google"}:
+                    raise ImportError(fullname + " is absent on this node")
+                return None
+
+        sys.meta_path.insert(0, Blocked())
+        from desktop_broker.identity import resolver
+        assert "trusted_proxy" in resolver._RESOLVERS
+        resolver._backend("trusted_proxy")
+        print("imported")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(FILES_DIR)},
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "a trusted_proxy broker failed to import without the iap "
+        f"dependencies:\n{result.stderr}"
+    )

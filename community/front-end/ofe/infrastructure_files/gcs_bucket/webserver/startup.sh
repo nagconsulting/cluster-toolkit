@@ -61,6 +61,17 @@ tar xfa /tmp/shellcheck.tar.xz --strip=1 --directory /usr/local/bin
 
 # Install Grafana
 curl -sSL -o gpg.key https://rpm.grafana.com/gpg.key
+# The large dnf install --best transaction above leaves /var/lib/rpm in a
+# state that the next bare rpm invocation reads as a version-mismatched
+# Berkeley DB environment (BDB0091 DB_VERSION_MISMATCH), even though the
+# transaction itself completes cleanly and rpm/rpm-libs is not among the
+# packages it upgrades (BF-092). Rebuild before the first bare rpm call
+# after that transaction, gated on the __db.* environment files so this
+# stays a no-op on any rpmdb backend where they do not apply.
+if compgen -G "/var/lib/rpm/__db.*" >/dev/null; then
+	rm -f /var/lib/rpm/__db.*
+	rpm --rebuilddb
+fi
 rpm --import gpg.key
 
 tee /etc/yum.repos.d/grafana.repo <<EOL

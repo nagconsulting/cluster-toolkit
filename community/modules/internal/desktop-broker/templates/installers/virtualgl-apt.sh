@@ -17,9 +17,11 @@
 # renders against a DRM render node directly, so no second X server bound to the
 # GPU is needed.
 #
-# No NVIDIA driver is installed here: use an image that already carries one, such
-# as slurm-gcp-6-12-ubuntu-2204-lts-nvidia-570. Without a driver there is no
-# render node and the desktop falls back to software rendering.
+# No NVIDIA driver is installed here: use an image already carrying one with
+# *graphics* support. slurm-gcp-6-12-debian-12 is the only published slurm-gcp
+# family that does; the ubuntu nvidia families ship a compute-only driver, which
+# has no libEGL_nvidia and cannot render. Without one the desktop falls back to
+# software rendering.
 #
 # NOTE: this file is read with file(), not templatefile(), so shell variables use
 # a single "$" - "$${...}" would survive into the rendered script and bash would

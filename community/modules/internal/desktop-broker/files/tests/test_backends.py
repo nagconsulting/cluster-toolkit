@@ -123,10 +123,46 @@ def test_start_command_names_the_xstartup_explicitly(backend_name):
     session = {
         "display_number": 1,
         "home_dir": "/home/someone",
-        "home_dir": "/home/someone",
         "vnc_socket": "/run/ghpc-remote-desktop/1000/vnc.sock",
         "slot": 0,
     }
     command = backend.start_command(session)
     assert "-xstartup" in command
     assert command[command.index("-xstartup") + 1] == "/home/someone/.vnc/xstartup"
+
+
+def test_turbovnc_prefers_its_own_binary_over_path(tmp_path, monkeypatch):
+    """A TigerVNC "vncserver" on PATH must not be driven with TurboVNC's flags.
+
+    TurboVNC installs under /opt and passes no "-rfbport", because
+    "-rfbunixpath" suppresses its TCP listener on its own. TigerVNC's does not,
+    so resolving the name to /usr/bin/vncserver would leave the display bound
+    to TCP and reachable by any local user.
+    """
+    from desktop_broker.backends import gpu
+
+    turbovnc = tmp_path / "opt" / "TurboVNC" / "bin" / "vncserver"
+    turbovnc.parent.mkdir(parents=True)
+    turbovnc.touch()
+
+    monkeypatch.setattr(gpu.shutil, "which", lambda name: "/usr/bin/vncserver")
+    assert gpu.preferred(str(turbovnc), "vncserver") == str(turbovnc)
+
+
+def test_binary_resolution_falls_back_to_path_then_to_the_fixed_location(
+    monkeypatch,
+):
+    """A custom image may install TurboVNC somewhere else entirely."""
+    from desktop_broker.backends import gpu
+
+    monkeypatch.setattr(gpu.shutil, "which", lambda name: "/usr/local/bin/vncserver")
+    assert (
+        gpu.preferred("/nonexistent/TurboVNC/bin/vncserver", "vncserver")
+        == "/usr/local/bin/vncserver"
+    )
+
+    monkeypatch.setattr(gpu.shutil, "which", lambda name: None)
+    assert (
+        gpu.preferred("/nonexistent/TurboVNC/bin/vncserver", "vncserver")
+        == "/nonexistent/TurboVNC/bin/vncserver"
+    )

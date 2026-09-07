@@ -21,8 +21,17 @@ class TurboVNCBackend(VNCBackend):
 
     security_args = ("-securitytypes", "none")
 
+    # TurboVNC installs under /opt, which is not on PATH, while TigerVNC's
+    # package provides /usr/bin/vncserver. Resolving by name first picks
+    # TigerVNC on any host carrying both - an image that ships it, or a
+    # deployment whose vnc_backend was switched from tigervnc, since changing
+    # it does not uninstall the old package - and then drives it with this
+    # class's flags. That is not only a GL problem: this backend passes no
+    # "-rfbport" because "-rfbunixpath" suppresses TurboVNC's TCP listener on
+    # its own, whereas TigerVNC's does not, so the display would come up
+    # reachable over TCP by any local user. See VNCBackend.tcp_disabled_port.
     def vncserver_command(self):
-        return gpu.which("vncserver", "/opt/TurboVNC/bin/vncserver")
+        return gpu.preferred("/opt/TurboVNC/bin/vncserver", "vncserver")
 
     def acceleration_diagnostic(self):
         reason = super().acceleration_diagnostic()

@@ -22,6 +22,17 @@ def which(binary_name, fallback):
     return shutil.which(binary_name) or fallback
 
 
+def preferred(binary_path, binary_name):
+    """binary_path when it exists, else a PATH lookup, else binary_path.
+
+    For a backend installed to a fixed location that is not on PATH, where a
+    binary of the same name belonging to another flavour may be found first.
+    """
+    if Path(binary_path).exists():
+        return binary_path
+    return shutil.which(binary_name) or binary_path
+
+
 def first_render_node():
     try:
         # /dev/dri holds only cardN and renderDN, so "render*" selects the

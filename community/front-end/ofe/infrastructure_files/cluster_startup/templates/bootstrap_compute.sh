@@ -29,13 +29,21 @@ echo "This is the startup script for the compute nodes on cluster ${CLUSTER_ID}"
 set -x
 set -e
 if [[ $(type -P yum) ]]; then
+	# Some Slurm images ship an rpmdb built against a mismatched Berkeley DB
+	# environment, so the first yum write transaction fails until it is
+	# rebuilt. The __db.* environment files only exist for that backend, so
+	# this is a no-op on images (e.g. Rocky 9) whose rpmdb uses sqlite.
+	if compgen -G "/var/lib/rpm/__db.*" >/dev/null; then
+		rm -f /var/lib/rpm/__db.*
+		rpm --rebuilddb
+	fi
 	yum install -y ansible
 else
 	apt install -y ansible
 fi
 
 cd /tmp
-gsutil -m cp -r "gs://${BUCKET}/clusters/ansible_setup" /tmp
+gcloud storage cp --recursive "gs://${BUCKET}/clusters/ansible_setup" /tmp
 cd /tmp/ansible_setup
 
 # Set up facts file

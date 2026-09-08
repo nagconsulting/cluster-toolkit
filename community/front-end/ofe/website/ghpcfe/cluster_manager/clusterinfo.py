@@ -21,12 +21,14 @@
 # 3 - Supplied via commandline
 """Cluster specification and management routines"""
 
+import ipaddress
 import json
 import logging
 import subprocess
 import os
 import re
 
+import requests
 from django.template import engines as template_engines
 from django.utils import timezone
 from google.api_core.exceptions import PermissionDenied as GCPPermissionDenied
@@ -40,6 +42,28 @@ from .. import grafana
 from ..models import Cluster, ApplicationInstallationLocation, ComputeInstance, ContainerRegistry
 
 logger = logging.getLogger(__name__)
+
+# Machine families whose GPUs are part of the machine type rather than attached
+# with guest_accelerator: A2 (A100), A3 (H100), A4/A4X (B200), G2 (L4). GCE
+# rejects guest_accelerator on these, yet they are still GPU instances and so
+# cannot live-migrate - they need on_host_maintenance=TERMINATE. Only N1 takes
+# GPUs as a separate attachment.
+_BUILTIN_GPU_MACHINE_FAMILIES = ("a2-", "a3-", "a4-", "a4x-", "g2-")
+
+
+def _machine_type_has_builtin_gpu(machine_type):
+    return str(machine_type or "").strip().lower().startswith(
+        _BUILTIN_GPU_MACHINE_FAMILIES
+    )
+
+
+class DesktopNetworkIsolationError(Exception):
+    """OFE could not confirm it is the sole route to the desktop broker port.
+
+    trusted_proxy identity has no cryptographic verification, so this must be
+    a hard failure rather than the silent, unrestricted-firewall fallback it
+    replaces.
+    """
 
 
 class ClusterInfo:
@@ -58,6 +82,7 @@ class ClusterInfo:
     def __init__(self, cluster):
         self.config = utils.load_config()
         self.ghpc_path = "/opt/gcluster/cluster-toolkit/ghpc"
+        self._hosting_network_info = None
 
         self.cluster = cluster
         self.cluster_dir = (
@@ -217,6 +242,93 @@ class ClusterInfo:
 
         return ("\n\n".join(filesystems_yaml), refs)
 
+    def _gcp_instance_metadata(self, path):
+        response = requests.get(
+            "http://metadata.google.internal/computeMetadata/v1/instance/" + path,
+            headers={"Metadata-Flavor": "Google"},
+            timeout=2,
+        )
+        response.raise_for_status()
+        return response.text.strip()
+
+    def _normalize_gcp_network_reference(self, resource_path):
+        tokens = resource_path.strip("/").split("/")
+        if len(tokens) == 4 and tokens[0] == "projects" and tokens[2] == "networks":
+            return f"projects/{tokens[1]}/global/networks/{tokens[3]}"
+        return resource_path
+
+    def _get_hosting_network_info(self):
+        if self._hosting_network_info is not None:
+            return self._hosting_network_info
+        if self.config.get("server", {}).get("host_type") != "GCP":
+            self._hosting_network_info = {}
+            return self._hosting_network_info
+        try:
+            network_path = self._gcp_instance_metadata("network-interfaces/0/network")
+            ip_address = self._gcp_instance_metadata("network-interfaces/0/ip")
+            subnetmask = self._gcp_instance_metadata("network-interfaces/0/subnetmask")
+            subnetwork_cidr = str(
+                ipaddress.IPv4Network(f"{ip_address}/{subnetmask}", strict=False)
+            )
+            self._hosting_network_info = {
+                "network_name": network_path.rstrip("/").split("/")[-1],
+                "network_self_link": self._normalize_gcp_network_reference(
+                    network_path
+                ),
+                "subnetwork_cidr": subnetwork_cidr,
+            }
+        except Exception as exc:
+            logger.warning(
+                "Unable to determine OFE hosting network metadata for desktop access: %s",
+                exc,
+            )
+            self._hosting_network_info = {}
+        return self._hosting_network_info
+
+    def _prepare_desktop_networking(self):
+        if not self.cluster.has_any_desktop:
+            return "", []
+        hosting_network = self._get_hosting_network_info()
+        if not hosting_network:
+            # trusted_proxy identity has no cryptographic verification - it is
+            # safe only where OFE's proxy is the sole route to the broker
+            # port. Without OFE's own network, no firewall source range can
+            # be scoped to it, so this must refuse to deploy rather than
+            # silently emit a rule with no source restriction (or none at
+            # all).
+            raise DesktopNetworkIsolationError(
+                "Could not determine OFE's own hosting network, which is "
+                "required to scope the desktop broker's firewall rule to "
+                "OFE's subnet. Refusing to deploy a remote desktop without "
+                "it - deploying anyway would leave the broker port "
+                "unrestricted."
+            )
+
+        allowed_ingress_cidrs = [hosting_network["subnetwork_cidr"]]
+        if hosting_network["network_name"] == self.cluster.subnet.vpc.cloud_id:
+            return "", allowed_ingress_cidrs
+
+        template = self.env.get_template("blueprint/vpc_peering_config.yaml.j2")
+        peerings = [
+            {
+                "peering_id": "desktop_ofe_to_cluster_peering",
+                "peering_name": f"{self.cluster.cloud_id}-ofe-to-cluster",
+                "network_self_link": f"\"{hosting_network['network_self_link']}\"",
+                "peer_network_self_link": "$(hpc_network.network_id)",
+            },
+            {
+                "peering_id": "desktop_cluster_to_ofe_peering",
+                "peering_name": f"{self.cluster.cloud_id}-cluster-to-ofe",
+                "network_self_link": "$(hpc_network.network_id)",
+                "peer_network_self_link": f"\"{hosting_network['network_self_link']}\"",
+            },
+        ]
+        rendered_peerings = [
+            self.indent_text(template.render(context), 1)
+            for context in peerings
+        ]
+        return "\n\n".join(rendered_peerings), allowed_ingress_cidrs
+
     def _prepare_ghpc_artifact_registry(self):
         if not getattr(self.cluster, "use_containers", False):
             return "", False
@@ -256,41 +368,138 @@ class ClusterInfo:
 
         return "\n\n".join(artifact_registry_yaml), has_registries
 
+    def _render_partition_yaml(self, part, part_id, part_uses):
+        template = self.env.get_template('blueprint/partition_config.yaml.j2')
+        disk_range = list(range(part.additional_disk_count))
+        exclusive = 'True' if part.enable_placement or not part.enable_node_reuse else 'False'
+        # The nodeset module defaults on_host_maintenance to TERMINATE, which
+        # GCP rejects for non-preemptible e2 instances. Emit MIGRATE for e2
+        # partitions instead. GPU nodes must keep TERMINATE (GPUs cannot
+        # live-migrate). The partition form (forms.py ClusterPartitionForm.clean)
+        # already refuses enable_placement for e2, so MIGRATE here can never
+        # silently deactivate a placement group.
+        machine_family = part.machine_type.split("-")[0]
+        use_migrate_maintenance = (
+            machine_family == "e2" and part.GPU_per_node == 0
+        )
+        context = {
+            'part': part,
+            'part_id': part_id,
+            'uses_str': self._yaml_refs_to_uses(part_uses, indent_level=1),
+            'cluster': self.cluster,
+            'disk_range': disk_range,
+            'exclusive': exclusive,
+            'use_migrate_maintenance': use_migrate_maintenance,
+            "startup_bucket": self.config["server"]["gcs_bucket"],
+        }
+        rendered_yaml = template.render(context)
+        return self.indent_text(rendered_yaml, 1)
+
     def _prepare_ghpc_partitions(self, part_uses):
         partitions_yaml = []
         refs = []
-        template = self.env.get_template('blueprint/partition_config.yaml.j2')
-        uses_str = self._yaml_refs_to_uses(part_uses, indent_level=1)
 
         for part in self.cluster.partitions.all():
-            disk_range = list(range(part.additional_disk_count))
-            exclusive = 'True' if part.enable_placement or not part.enable_node_reuse else 'False'
-            # The nodeset module defaults on_host_maintenance to TERMINATE, which
-            # GCP rejects for non-preemptible e2 instances. Emit MIGRATE for e2
-            # partitions instead. GPU nodes must keep TERMINATE (GPUs cannot
-            # live-migrate). The partition form (forms.py ClusterPartitionForm.clean)
-            # already refuses enable_placement for e2, so MIGRATE here can never
-            # silently deactivate a placement group.
-            machine_family = part.machine_type.split("-")[0]
-            use_migrate_maintenance = (
-                machine_family == "e2" and part.GPU_per_node == 0
+            part_id = f"partition_{part.id}"
+            partitions_yaml.append(
+                self._render_partition_yaml(part, part_id, part_uses)
             )
-            context = {
-                'part': part,
-                'part_id': f"partition_{part.id}",
-                'uses_str': uses_str,
-                'cluster': self.cluster,
-                'disk_range': disk_range,
-                'exclusive': exclusive,
-                'use_migrate_maintenance': use_migrate_maintenance,
-                "startup_bucket": self.config["server"]["gcs_bucket"],
-            }
-            rendered_yaml = template.render(context)
-            indented_yaml = self.indent_text(rendered_yaml, 1)   # Same here
-            partitions_yaml.append(indented_yaml)
-            refs.append(context['part_id'])
+            refs.append(part_id)
 
         return ("\n\n".join(partitions_yaml), refs)
+
+    def _prepare_desktop_partition(self, part_uses):
+        if not self.cluster.viz_desktop_enabled:
+            return "", []
+        part_id = "web_desktop_partition"
+        template = self.env.get_template(
+            "blueprint/desktop_partition_config.yaml.j2"
+        )
+        dynamic_node_count = (
+            1
+            if self.cluster.desktop_partition_mode
+            == Cluster.DESKTOP_PARTITION_MODE_DYNAMIC
+            else 0
+        )
+        static_node_count = (
+            1
+            if self.cluster.desktop_partition_mode
+            == Cluster.DESKTOP_PARTITION_MODE_STATIC
+            else 0
+        )
+        machine_type = self.cluster.desktop_instance_type
+        context = {
+            "cluster": self.cluster,
+            "part_id": part_id,
+            "partition_name": self.cluster.viz_desktop_partition_name,
+            "dynamic_node_count": dynamic_node_count,
+            "static_node_count": static_node_count,
+            "machine_type": machine_type,
+            "boot_disk_size": self.cluster.login_node_disk_size,
+            "boot_disk_type": self.cluster.login_node_disk_type,
+            "gpu_count": (
+                self.cluster.desktop_gpu_count
+                if self.cluster.desktop_gpu_type
+                else 0
+            ),
+            "gpu_type": self.cluster.desktop_gpu_type or "",
+            # Machine families whose GPUs come with the machine type rather than
+            # being attached separately. For these, guest_accelerator must NOT be
+            # set (GCE rejects it) but the instance still needs
+            # on_host_maintenance=TERMINATE, which is otherwise only applied when
+            # an accelerator was requested explicitly.
+            "gpu_from_machine_type": _machine_type_has_builtin_gpu(machine_type),
+            # Placement is one choice, so at most one of these is ever set. The
+            # nodeset rejects a reservation combined with extra zones, and a
+            # reservation is zonal so the combination is meaningless anyway.
+            "extra_zones": self._desktop_extra_zones(machine_type),
+            "reservation_name": (
+                self.cluster.desktop_reservation_name
+                if self.cluster.desktop_placement_mode
+                == Cluster.DESKTOP_PLACEMENT_RESERVATION
+                else ""
+            ),
+            "uses_str": self._yaml_refs_to_uses(part_uses, indent_level=1),
+        }
+        rendered_yaml = self.indent_text(template.render(context), 1)
+        return rendered_yaml, [part_id]
+
+    def _desktop_extra_zones(self, machine_type):
+        """Additional zones the desktop node may be created in.
+
+        The nodeset unions these with its own zone, so the cluster's zone is
+        excluded here. Zones are filtered to those actually offering the machine
+        type: the nodeset validates every zone it is given against the region and
+        fails the deployment on a bad one, and a zone with no such machine type
+        could never serve the node anyway.
+
+        Returns [] when the lookup fails, which renders no "zones" setting and
+        leaves the single-zone behaviour untouched - widening placement is an
+        optimisation, and it must not be able to break cluster creation.
+        """
+        if (
+            self.cluster.desktop_placement_mode
+            != Cluster.DESKTOP_PLACEMENT_ANY_ZONE
+        ):
+            return []
+        try:
+            zones = cloud_info.get_zones_supporting_machine_type(
+                "GCP",
+                self.cluster.cloud_credential.detail,
+                self.cluster.cloud_region,
+                machine_type,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "Could not determine zones supporting %s in %s; the desktop "
+                "will be restricted to %s",
+                machine_type,
+                self.cluster.cloud_region,
+                self.cluster.cloud_zone,
+                exc_info=True,
+            )
+            return []
+        return [zone for zone in zones if zone != self.cluster.cloud_zone]
 
     def _prepare_cloudsql_yaml(self):
         if not self.cluster.use_cloudsql:
@@ -314,17 +523,36 @@ class ClusterInfo:
             yaml_file = self.cluster_dir / "cluster.yaml"
             project_id = json.loads(self.cluster.cloud_credential.detail)["project_id"]
             filesystems_yaml, filesystems_refs = self._prepare_ghpc_filesystems()
+            desktop_network_yaml, desktop_allowed_ingress_cidrs = (
+                self._prepare_desktop_networking()
+            )
             partitions_yaml, partitions_refs = self._prepare_ghpc_partitions(filesystems_refs)
+            desktop_partition_yaml, desktop_partition_refs = (
+                self._prepare_desktop_partition(filesystems_refs)
+            )
             artifact_registry_yaml, use_containers = self._prepare_ghpc_artifact_registry()
             cloudsql_yaml, cloudsql_refs = self._prepare_cloudsql_yaml()
 
             # Use a template to generate the final YAML configuration
             template = self.env.get_template('blueprint/cluster_config.yaml.j2')
-            controller_uses_refs = ["hpc_network"] + partitions_refs + filesystems_refs + cloudsql_refs
+            controller_uses_refs = (
+                ["hpc_network"]
+                + partitions_refs
+                + desktop_partition_refs
+                + filesystems_refs
+                + cloudsql_refs
+            )
             context = {
                 "project_id": project_id,
                 "site_name": SITE_NAME,
                 "filesystems_yaml": filesystems_yaml,
+                "desktop_network_yaml": desktop_network_yaml,
+                "desktop_allowed_ingress_cidrs": desktop_allowed_ingress_cidrs,
+                "desktop_partition_yaml": desktop_partition_yaml,
+                # The only mode implemented so far. A context var rather than
+                # a literal in the template so adding "iap" later is a value
+                # change here, not a template restructure.
+                "desktop_identity_mode": "trusted_proxy",
                 "partitions_yaml": partitions_yaml,
                 "artifact_registry_yaml": artifact_registry_yaml,
                 "cloudsql_yaml": cloudsql_yaml,
@@ -355,6 +583,12 @@ class ClusterInfo:
             
             self.use_containers = use_containers
 
+        except DesktopNetworkIsolationError:
+            # Must reach the caller as a hard failure, not the logged-and-
+            # swallowed outcome below: trusted_proxy identity has no
+            # cryptographic verification, so silently continuing here would
+            # deploy a desktop broker with no firewall isolation.
+            raise
         except Exception as e:
             logger.exception(f"Exception happened creating blueprint for cluster {self.cluster.name} - {e}")
 
@@ -645,6 +879,95 @@ class ClusterInfo:
         if not updated_registry_ids:
             logger.warning("No ContainerRegistry entries were updated with repository or secret information.")
 
+    def _update_desktop_service_metadata(self, tf_state):
+        """Refresh the login-node desktop's proxy target from Terraform state.
+
+        The visualisation desktop's endpoint is set separately by the c2
+        daemon's START_DESKTOP/STOP_DESKTOP callbacks, since its node is
+        brought up by the Slurm controller after boot, not by `terraform
+        apply` (schedmd-slurm-gcp-v6 static nodes are controller-managed).
+        """
+        if not self.cluster.has_any_desktop:
+            self.cluster.login_desktop_service_host = None
+            self.cluster.login_desktop_service_name = None
+            self.cluster.login_desktop_service_port = 6080
+            self.cluster.desktop_service_host = None
+            self.cluster.desktop_service_name = None
+            self.cluster.desktop_service_port = 6080
+            self.cluster.desktop_job_id = None
+            self.cluster.desktop_job_state = None
+            self.cluster.save(
+                update_fields=[
+                    "login_desktop_service_host",
+                    "login_desktop_service_name",
+                    "login_desktop_service_port",
+                    "desktop_service_host",
+                    "desktop_service_name",
+                    "desktop_service_port",
+                    "desktop_job_id",
+                    "desktop_job_state",
+                ]
+            )
+            return
+
+        desktop_filters = {
+            "module": 'module.slurm_controller.module.login["slurm-login"].module.instance',
+            "type": "google_compute_instance_from_template",
+            "name": "slurm_instance",
+        }
+        update_fields = set()
+
+        # Cleared unconditionally: the login desktop fields are repopulated
+        # further down only if login_desktop_enabled, so both the enabled and
+        # disabled cases start from empty.
+        self.cluster.login_desktop_service_host = None
+        self.cluster.login_desktop_service_name = None
+        self.cluster.login_desktop_service_port = 6080
+        update_fields.update(
+            [
+                "login_desktop_service_host",
+                "login_desktop_service_name",
+                "login_desktop_service_port",
+            ]
+        )
+
+        desktop_resources = self._get_tf_state_resource(tf_state, desktop_filters)
+        if not desktop_resources:
+            logger.warning(
+                "No desktop host resources found for cluster %s",
+                self.cluster.id,
+            )
+            self.cluster.save(update_fields=sorted(update_fields))
+            return
+
+        desktop_instances = desktop_resources[0].get("instances", [])
+        if not desktop_instances:
+            logger.warning(
+                "Desktop host resource has no instances for cluster %s",
+                self.cluster.id,
+            )
+            self.cluster.save(update_fields=sorted(update_fields))
+            return
+
+        desktop_nic = desktop_instances[0].get("attributes", {}).get(
+            "network_interface",
+            [],
+        )
+        if not desktop_nic:
+            logger.warning(
+                "Desktop host resource has no network interface for cluster %s",
+                self.cluster.id,
+            )
+            self.cluster.save(update_fields=sorted(update_fields))
+            return
+
+        desktop_attributes = desktop_instances[0].get("attributes", {})
+        if self.cluster.login_desktop_enabled:
+            self.cluster.login_desktop_service_host = desktop_nic[0].get("network_ip")
+            self.cluster.login_desktop_service_name = desktop_attributes.get("name")
+
+        self.cluster.save(update_fields=sorted(update_fields))
+
     def _apply_terraform(self):
         terraform_dir = self.get_terraform_dir()
 
@@ -736,6 +1059,8 @@ class ClusterInfo:
                         else lnode.internal_ip,
                     )
 
+                self._update_desktop_service_metadata(state)
+
                 # Set up Spack Install location
                 self._configure_spack_install_loc()
 
@@ -788,6 +1113,12 @@ class ClusterInfo:
 
             self.cluster.status = "d"
             self.cluster.cloud_state = "xm"
+            self.cluster.login_desktop_service_host = None
+            self.cluster.login_desktop_service_name = None
+            self.cluster.desktop_service_host = None
+            self.cluster.desktop_service_name = None
+            self.cluster.desktop_job_id = None
+            self.cluster.desktop_job_state = None
             self.cluster.save()
 
             c2.delete_cluster_subscription(self.cluster.id, controller_sa)

@@ -114,6 +114,12 @@
               <a class="dropdown-item btn btn-sm btn-secondary" href="{% url 'application-create-spack-cluster' cluster.id %}">Install Spack Application</a>
               <a class="dropdown-item btn btn-sm btn-secondary" href="{% url 'application-create-install' cluster.id %}">Install Custom Application</a>
               <a class="dropdown-item btn btn-sm btn-secondary" href="{% url 'application-create' cluster.id %}">Add Manually-configured Application</a>
+              {% if cluster.login_desktop_enabled %}
+              <a class="dropdown-item btn btn-sm btn-secondary" href="{% url 'cluster-desktop-target' cluster.id 'login' %}">Login Desktop</a>
+              {% endif %}
+              {% if cluster.viz_desktop_enabled %}
+              <a class="dropdown-item btn btn-sm btn-secondary" href="{% url 'cluster-desktop-target' cluster.id 'viz' %}">Visualisation Desktop</a>
+              {% endif %}
               {% endif %}
            {% endif %}
               {% if user.is_authenticated and cluster.status == "r" %}

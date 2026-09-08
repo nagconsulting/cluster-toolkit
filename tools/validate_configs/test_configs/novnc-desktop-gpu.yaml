@@ -14,12 +14,24 @@
 
 ---
 
-blueprint_name: novnc-desktop
+# Structural coverage only: `make validate_configs` mocks machine-type lookups
+# to an empty accelerator table (GHPC_MOCK_MACHINE_CONFIG in
+# tools/validate_configs/validate_configs.sh), so guest_accelerator is set
+# explicitly here rather than relying on g2's built-in GPU to be resolved.
+# What this catches: the module wiring compiles and the GPU preconditions in
+# community/modules/internal/desktop-broker/main.tf and
+# community/modules/remote-desktop/novnc-desktop/main.tf accept a
+# correctly-configured GPU desktop. It does not exercise VirtualGL, the
+# driver, or rendering - see community/examples/remote-desktop/README.md
+# for that.
+
+blueprint_name: novnc-desktop-gpu
 
 vars:
-  deployment_name: novnc-desktop
-  # This secret must already exist in the test project; the test does not create
-  # it. See tools/cloud-build/daily-tests/tests/novnc-desktop.yml.
+  project_id:  ## Set GCP Project ID Here ##
+  deployment_name: novnc-desktop-gpu
+  region: us-central1
+  zone: us-central1-a
   desktop_proxy_secret_id: ghpc-test-desktop-proxy-secret
 
 deployment_groups:
@@ -35,14 +47,8 @@ deployment_groups:
       deployment_name: $(vars.deployment_name)
       name: desktop
       project_roles:
-      # The startup-script module stages its runners in Cloud Storage, so any
-      # instance that runs them needs to read that bucket. Overriding
-      # service_account_email removes the access the default compute service
-      # account would have had, so it has to be granted here.
       - storage.objectViewer
       - secretmanager.secretAccessor
-      # The Ops Agent is preinstalled on these images; without these it retries
-      # its exports indefinitely and floods the serial console.
       - logging.logWriter
       - monitoring.metricWriter
 
@@ -50,19 +56,23 @@ deployment_groups:
     source: community/modules/remote-desktop/novnc-desktop
     use: [network, desktop-service-account]
     settings:
-      machine_type: n2-standard-4
+      # Only slurm-gcp-6-12-debian-12 ships an NVIDIA driver with graphics
+      # (not merely compute) support - see the README and the VirtualGL
+      # installer comments for why the other published families cannot
+      # accelerate.
+      instance_image:
+        family: slurm-gcp-6-12-debian-12
+        project: schedmd-slurm-public
+      machine_type: g2-standard-8
+      guest_accelerator:
+      - type: nvidia-l4
+        count: 1
+      on_host_maintenance: TERMINATE
       enable_public_ips: false
       service_account_scopes:
       - https://www.googleapis.com/auth/cloud-platform
       secret_project_id: $(vars.project_id)
       novnc_proxy_secret_id: $(vars.desktop_proxy_secret_id)
       novnc_identity_mode: trusted_proxy
-      vnc_backend: tigervnc
-
-  # Makes terraform wait until the whole desktop runtime has installed: the
-  # XFCE stack, the VNC backend, noVNC and the broker.
-  - id: wait
-    source: community/modules/scripts/wait-for-startup
-    use: [desktop]
-    settings:
-      timeout: 2400
+      vnc_backend: turbovnc
+      enable_gpu_acceleration: true

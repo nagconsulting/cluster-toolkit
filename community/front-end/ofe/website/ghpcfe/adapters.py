@@ -17,6 +17,7 @@
 
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from django.contrib.auth import get_user_model
 from .models import AuthorisedUser
 
 import logging
@@ -33,6 +34,44 @@ class CustomAccountAdapter(DefaultAccountAdapter):
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
     """Adapter allowing simple whitelisting of users"""
+
+    def pre_social_login(self, request, sociallogin):
+        """Link a Google login to an existing OFE user with the same email.
+
+        Without this, a user created before Google login was enabled cannot
+        subsequently sign in with "Login with Google" using their own email -
+        allauth treats it as a new signup and is_open_for_signup below has no
+        way to associate it with their existing account. It also matters for
+        the desktop broker: identity resolution needs a Google login uid
+        (see views/desktop.py _get_google_login_uid), which only exists once
+        the social account is linked.
+        """
+        if sociallogin.is_existing:
+            return
+
+        email = (sociallogin.user.email or "").strip().lower()
+        if not email:
+            return
+
+        user_model = get_user_model()
+        try:
+            existing_user = user_model.objects.get(email__iexact=email)
+        except user_model.DoesNotExist:
+            return
+        except user_model.MultipleObjectsReturned:
+            logger.warning(
+                "Multiple OFE users share the email %s; not linking the Google "
+                "social account automatically",
+                email,
+            )
+            return
+
+        logger.info(
+            "Linking Google social account for %s to existing OFE user %s",
+            email,
+            existing_user.username,
+        )
+        sociallogin.connect(request, existing_user)
 
     def is_open_for_signup(self, request, sociallogin):
         u = sociallogin.user

@@ -380,5 +380,14 @@ resource "terraform_data" "input_validation" {
       error_message = "vnc_display_number must be at least 1. Display :0 is reserved for a physical console."
     }
 
+    precondition {
+      # VirtualGL is installed only for turbovnc (see local.install_virtualgl),
+      # and it is the only route to the GPU: TurboVNC's Xvnc has no
+      # "-rendernode". Accepting this pair installed nothing and rendered in
+      # software, with only a broker log line to say so.
+      condition     = !var.enable_gpu_acceleration || local.vnc_backend == "turbovnc"
+      error_message = "enable_gpu_acceleration requires vnc_backend = \"turbovnc\". TigerVNC reaches a GPU only through \"-rendernode\", which needs a DRM render node that GCE's NVIDIA images do not create."
+    }
+
   }
 }

@@ -35,6 +35,13 @@ from .views.filesystems import *
 from .views.gcpfilestore import *
 from .views.grafana import GrafanaProxyView, GrafanaView
 from .views.asyncview import RunningTasksViewSet
+from .views.desktop import (
+    ClusterDesktopAuthView,
+    ClusterDesktopPowerView,
+    ClusterDesktopProxyView,
+    ClusterDesktopTargetView,
+    ClusterDesktopView,
+)
 
 handler403 = "ghpcfe.views.error_pages.custom_error_403"
 
@@ -234,6 +241,31 @@ urlpatterns += [
         "cluster/<int:pk>/logs/<int:logid>",
         ClusterLogFileView.as_view(),
         name="cluster-log-file",
+    ),
+    path(
+        "cluster/<int:pk>/desktop/",
+        ClusterDesktopView.as_view(),
+        name="cluster-desktop",
+    ),
+    path(
+        "cluster/<int:pk>/desktop/<str:target>/",
+        ClusterDesktopTargetView.as_view(),
+        name="cluster-desktop-target",
+    ),
+    path(
+        "cluster/<int:pk>/desktop/<str:target>/auth/",
+        ClusterDesktopAuthView.as_view(),
+        name="cluster-desktop-auth",
+    ),
+    path(
+        "cluster/<int:pk>/desktop/<str:target>/power/<str:action>/",
+        ClusterDesktopPowerView.as_view(),
+        name="cluster-desktop-power",
+    ),
+    re_path(
+        r"^cluster/(?P<pk>\d+)/desktop/(?P<target>[a-z]+)/proxy/(?P<path>.*)$",
+        ClusterDesktopProxyView.as_view(),
+        name="cluster-desktop-proxy",
     ),
 ]
 

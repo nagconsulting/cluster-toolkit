@@ -21,6 +21,18 @@ locals {
   remote_desktop_tag = "ghpc-novnc-desktop"
 }
 
+# A machine type may carry a GPU without guest_accelerator being set - g2 and the
+# a2/a3 families do - so the effective list is what the toolkit resolves, not
+# what the caller passed. vm-instance runs this same module internally; it is
+# instantiated here as well so the preconditions below can see the result.
+module "gpu" {
+  source = "../../../../modules/internal/gpu-definition"
+
+  machine_type      = var.machine_type
+  guest_accelerator = var.guest_accelerator
+  machine_configs   = var.machine_configs
+}
+
 module "novnc_runtime" {
   source = "../novnc-runtime"
 
@@ -84,6 +96,7 @@ module "instances" {
 
   threads_per_core    = var.threads_per_core
   guest_accelerator   = var.guest_accelerator
+  machine_configs     = var.machine_configs
   on_host_maintenance = var.on_host_maintenance
 
   network_storage = []
@@ -114,5 +127,30 @@ resource "google_compute_firewall" "novnc_ingress" {
   allow {
     protocol = "tcp"
     ports    = [tostring(var.novnc_listen_port)]
+  }
+}
+
+resource "terraform_data" "gpu_validation" {
+  input = {
+    guest_accelerator   = module.gpu.guest_accelerator
+    on_host_maintenance = var.on_host_maintenance
+  }
+
+  lifecycle {
+    precondition {
+      # Acceleration needs a device to render on. Without one the session starts
+      # and renders in software, which looks like a working GPU desktop until
+      # someone measures it.
+      condition     = !var.enable_gpu_acceleration || length(module.gpu.guest_accelerator) > 0
+      error_message = "enable_gpu_acceleration is set but the instance has no GPU. Use a machine type that carries one (for example g2-standard-8) or set guest_accelerator."
+    }
+
+    precondition {
+      # Compute Engine refuses to create an instance that has an accelerator
+      # attached and a maintenance policy of MIGRATE. The module default is
+      # MIGRATE, so a GPU desktop fails at apply time unless this is changed.
+      condition     = length(module.gpu.guest_accelerator) == 0 || var.on_host_maintenance == "TERMINATE"
+      error_message = "on_host_maintenance must be \"TERMINATE\" when a GPU is attached. Compute Engine does not support live migration of accelerated instances."
+    }
   }
 }

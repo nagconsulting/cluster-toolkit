@@ -250,6 +250,32 @@ typically return clear error messages.
 For this project, the following roles should be sufficient for the admin users to manage the required service account: *Service Account User*, *Service Account Admin*, and *Service Account Key Admin*.
 -->
 
+### Remote desktop identity (required for desktops)
+
+Cluster desktops (browser access to the login node, or a GPU visualisation
+node) are brokered per user. Identity is established as **trusted_proxy**:
+TKFE authenticates the user itself, and nginx's `auth_request` step injects
+the user's identity into headers on the way to the broker - the broker does
+not verify a cryptographic signature. Because of that, three things must
+hold before enabling desktops on a cluster:
+
+- **Google login must already be configured on TKFE** - see [Set up Google
+  OAuth2 login](#set-up-google-oauth2-login) above. The broker resolves the
+  POSIX account for a desktop session from the user's Google subject via OS
+  Login, so a user with no Google-authenticated session has no `login_uid`
+  and cannot open a desktop.
+- **OS Login must be enabled on the cluster's instances**, and desktop users
+  need `roles/compute.osLogin` (or `roles/compute.osLoginExternalUser` for
+  users outside your organisation, per [Note on external
+  users](#note-on-external-users) above) so their POSIX account actually
+  resolves.
+- **TKFE must remain the only route to the desktop broker's port.** trusted_proxy
+  has no verification of its own - its safety depends entirely on nothing else
+  being able to reach the broker directly. TKFE enforces this itself by scoping
+  the cluster's firewall rule to its own subnet (peering the two VPCs first if
+  they differ) and refuses to deploy a desktop-enabled cluster if it cannot
+  determine its own network, rather than deploying with the port left open.
+
 ## Network Management
 
 All cloud systems begin with defining the network that components will

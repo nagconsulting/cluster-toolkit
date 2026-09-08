@@ -398,6 +398,46 @@ def get_region_zone_info(cloud_provider, credentials):
         raise Exception("Unsupported Cloud Provider")
 
 
+def get_zones_supporting_machine_type(
+    cloud_provider, credentials, region, machine_type
+):
+    """Zones in `region` that offer `machine_type`, sorted.
+
+    This reports availability, not capacity. Google Cloud publishes no API for
+    free capacity, so a zone listed here can still refuse an instance with
+    ZONE_RESOURCE_POOL_EXHAUSTED - and a zone with capacity now may have none a
+    minute later. Use this only to widen where a node is allowed to be created,
+    never to predict that a create will succeed.
+
+    Returns [] if the region is unknown, so callers can treat "no answer" the
+    same as "do not widen" rather than emitting a zone the region does not have
+    (the nodeset module validates its zones against the region and fails the
+    whole deployment on a bad one).
+    """
+    if cloud_provider != "GCP":
+        raise Exception(f'Unsupported Cloud Provider "{cloud_provider}"')
+
+    zones = get_region_zone_info(cloud_provider, credentials).get(region, [])
+    supported = []
+    for zone in zones:
+        try:
+            if machine_type in get_machine_types(
+                cloud_provider, credentials, region, zone
+            ):
+                supported.append(zone)
+        except Exception:  # pylint: disable=broad-except
+            # One unreadable zone must not cost us the others: a partial list
+            # still widens placement, where raising here would abort the
+            # cluster's blueprint generation entirely.
+            logger.warning(
+                "Could not list machine types in zone %s; "
+                "excluding it from multi-zone desktop placement",
+                zone,
+                exc_info=True,
+            )
+    return sorted(supported)
+
+
 def _get_gcp_subnets(credentials):
     (project, client) = _get_gcp_client(credentials)
 

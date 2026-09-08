@@ -25,11 +25,20 @@
     <br/>
 
     <div class="alert alert-danger">You are going to destroy cluster <strong>{{ cluster.name }}</strong>.
-      Please note that this action cannot 
-      be undone. Actively ongoing application installations and jobs on this cluster will be terminated and cannot 
+      Please note that this action cannot
+      be undone. Actively ongoing application installations and jobs on this cluster will be terminated and cannot
       be restarted.
     </div>
-    
+
+    {% if active_viz_desktop %}
+    <div class="alert alert-warning">
+      A visualisation desktop session is still active on this cluster.
+      Stop the desktop before destroying the cluster.
+      {% if cluster.desktop_job_id %}Current desktop job: <strong>{{ cluster.desktop_job_id }}</strong>.{% endif %}
+      {% if cluster.desktop_job_state %}State: <strong>{{ cluster.desktop_job_state }}</strong>.{% endif %}
+    </div>
+    {% endif %}
+
     <hr>
     <p style="text-decoration: underline; font-size: large;">Active application installations</p>
     <div class="table-responsive">

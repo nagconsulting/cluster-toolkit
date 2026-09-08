@@ -71,7 +71,34 @@ deployment_groups:
       - artifactregistry.admin
       - secretmanager.secretAccessor
 
+{% if cluster.viz_desktop_enabled %}
+  - source: community/modules/remote-desktop/novnc-runtime
+    kind: terraform
+    id: viz_desktop_runtime
+    settings:
+      startup_script: |
+        #!/bin/bash
+        echo "******************************************** CALLING COMPUTE STARTUP"
+        gcloud storage cat gs://{{ startup_bucket }}/clusters/{{ cluster.id }}/bootstrap_compute.sh | bash
+      desktop_endpoint_dir: /shared/ghpc-remote-desktop/endpoints
+      desktop_endpoint_name: viz
+      novnc_proxy_secret: "{{ cluster.desktop_proxy_secret }}"
+      novnc_identity_mode: {{ desktop_identity_mode }}
+      slurm_auth_mode: auto
+      vnc_backend: "{{ cluster.viz_desktop_vnc_backend }}"
+
+  - source: modules/scripts/startup-script
+    kind: terraform
+    id: viz_desktop_startup
+    settings:
+      bucket_viewers:
+        - "serviceAccount:$(hpc_service_account.service_account_email)"
+      runners: $(viz_desktop_runtime.startup_runners)
+{% endif %}
+
 {{ partitions_yaml | safe }}
+
+{{ desktop_partition_yaml | safe }}
 
 {{ cloudsql_yaml | safe }}
 
@@ -102,14 +129,21 @@ deployment_groups:
         - https://www.googleapis.com/auth/pubsub
       compute_startup_scripts_timeout: 1200
       controller_startup_scripts_timeout: 1200
+{% if cluster.login_desktop_enabled %}
+      login_startup_scripts_timeout: 1200
+{% endif %}
       controller_startup_script: |
         #!/bin/bash
         echo "******************************************** CALLING CONTROLLER STARTUP"
         gcloud storage cat gs://{{ startup_bucket }}/clusters/{{ cluster.id }}/bootstrap_controller.sh | bash
+{% if cluster.login_desktop_enabled %}
+      login_startup_script: $(login_desktop_startup.startup_script)
+{% else %}
       login_startup_script: |
         #!/bin/bash
         echo "******************************************** CALLING LOGIN STARTUP"
         gcloud storage cat gs://{{ startup_bucket }}/clusters/{{ cluster.id }}/bootstrap_login.sh | bash
+{% endif %}
     use:
     - slurm_login
 {{ controller_uses | safe }}
@@ -133,3 +167,57 @@ deployment_groups:
         - https://www.googleapis.com/auth/monitoring.write
         - https://www.googleapis.com/auth/logging.write
         - https://www.googleapis.com/auth/devstorage.read_write
+{% if cluster.login_desktop_enabled %}
+      tags:
+        - ghpc-novnc-desktop
+{% endif %}
+{% if cluster.has_any_desktop %}
+{{ desktop_network_yaml | safe }}
+{% endif %}
+
+{% if cluster.login_desktop_enabled %}
+  - source: community/modules/remote-desktop/novnc-runtime
+    kind: terraform
+    id: login_desktop_runtime
+    settings:
+      startup_script: |
+        #!/bin/bash
+        echo "******************************************** CALLING LOGIN STARTUP"
+        gcloud storage cat gs://{{ startup_bucket }}/clusters/{{ cluster.id }}/bootstrap_login.sh | bash
+      desktop_endpoint_dir: /shared/ghpc-remote-desktop/endpoints
+      desktop_endpoint_name: login
+      novnc_proxy_secret: "{{ cluster.desktop_proxy_secret }}"
+      novnc_identity_mode: {{ desktop_identity_mode }}
+      slurm_auth_mode: auto
+      vnc_backend: "{{ cluster.login_desktop_vnc_backend }}"
+
+  - source: modules/scripts/startup-script
+    kind: terraform
+    id: login_desktop_startup
+    settings:
+      bucket_viewers:
+        - "serviceAccount:$(hpc_service_account.service_account_email)"
+      runners: $(login_desktop_runtime.startup_runners)
+{% endif %}
+
+{% if cluster.has_any_desktop and desktop_allowed_ingress_cidrs %}
+  - source: modules/network/firewall-rules
+    kind: terraform
+    id: web_desktop_firewall
+    use:
+      - hpc_network
+    settings:
+      ingress_rules:
+        - name: {{ cluster.cloud_id }}-novnc
+          description: Allow OFE to reach noVNC on cluster desktop hosts
+          source_ranges:
+{% for cidr in desktop_allowed_ingress_cidrs %}
+            - "{{ cidr }}"
+{% endfor %}
+          target_tags:
+            - ghpc-novnc-desktop
+          allow:
+            - protocol: tcp
+              ports:
+                - "6080"
+{% endif %}

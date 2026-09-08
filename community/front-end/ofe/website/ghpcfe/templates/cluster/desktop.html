@@ -1,0 +1,67 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+{% extends "base_generic.html" %}
+
+{% block meta %}
+{% if desktop_poll %}
+<meta http-equiv="refresh" content="10" />
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<h2>{{ desktop_target_label }}</h2>
+<p><b>Cluster:</b> {{ object.name }}</p>
+<p><b>Remote Desktop Target:</b> {{ desktop_target_label }}</p>
+<p>This launches your own desktop session using your OFE and OS Login identity.</p>
+<div class="alert alert-{{ desktop_status_banner.level }}">{{ desktop_status_banner.message }}</div>
+<div class="table-responsive" style="max-width: 56rem;">
+  <table class="table table-sm align-middle">
+    <tbody>
+      {% for item in desktop_diagnostics %}
+      <tr>
+        <th style="width: 14rem;">{{ item.label }}</th>
+        <td>{{ item.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if desktop_can_start %}
+<form method="post" action="{% url 'cluster-desktop-power' object.id desktop_target 'start' %}" style="margin-bottom: 1rem;">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-primary">Start Desktop</button>
+</form>
+{% endif %}
+{% if desktop_can_stop %}
+<form method="post" action="{% url 'cluster-desktop-power' object.id desktop_target 'stop' %}" style="margin-bottom: 1rem;"
+      onsubmit="return confirm('Stopping the desktop powers the node down. Any other users connected to it will lose their sessions. Proceed?');">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-outline-secondary">Stop Desktop</button>
+</form>
+{% elif desktop_started_by and not desktop_can_start %}
+<p class="text-muted" style="margin-bottom: 1rem;">
+  Started by {{ desktop_started_by.username }}. Only they or an admin can stop it.
+</p>
+{% endif %}
+{% if proxy_url %}
+<iframe
+  src="{{ proxy_url }}"
+  title="{{ desktop_target_label }}"
+  style="border: none; width: 100%; min-height: 85vh;"
+></iframe>
+{% endif %}
+{% endblock %}

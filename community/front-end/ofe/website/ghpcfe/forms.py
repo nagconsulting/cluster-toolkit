@@ -128,6 +128,12 @@ class ClusterForm(forms.ModelForm):
         # For machine types, will use JS to get valid types dependent on
         # cloud zone. So bypass cleaning and choices
         def prep_dynamic_select(field, value):
+            # A re-POST (e.g. after a validation error elsewhere on the form)
+            # is bound, and its submitted value - not the instance's stale
+            # one - is what must round-trip back through this fake choice
+            # list, or the dynamic select silently reverts on redisplay.
+            if self.is_bound:
+                value = self.data.get(self.add_prefix(field), value)
             self.fields[field].widget.choices = [
                 ( value, value )
             ]
@@ -148,6 +154,14 @@ class ClusterForm(forms.ModelForm):
         prep_dynamic_select(
             "login_node_disk_type",
             self.instance.login_node_disk_type
+        )
+        prep_dynamic_select(
+            "desktop_instance_type",
+            self.instance.desktop_instance_type
+        )
+        prep_dynamic_select(
+            "desktop_gpu_type",
+            self.instance.desktop_gpu_type or ""
         )
 
         # If cluster is running make some of form field ready only.
@@ -185,6 +199,16 @@ class ClusterForm(forms.ModelForm):
             "use_bigquery",
             "use_containers",
             "enable_slurm_auth",
+            "enable_web_desktop",
+            "enable_viz_desktop",
+            "login_desktop_vnc_backend",
+            "desktop_partition_mode",
+            "desktop_instance_type",
+            "viz_desktop_vnc_backend",
+            "desktop_gpu_type",
+            "desktop_gpu_count",
+            "desktop_placement_mode",
+            "desktop_reservation_name",
         )
 
         widgets = {
@@ -230,7 +254,223 @@ class ClusterForm(forms.ModelForm):
             "use_bigquery": forms.CheckboxInput(attrs={"class": "required checkbox"}),
             "use_containers": forms.CheckboxInput(attrs={"class": "required checkbox"}),
             "enable_slurm_auth": forms.CheckboxInput(attrs={"class": "required checkbox"}),
+            "enable_web_desktop": forms.CheckboxInput(attrs={"class": "required checkbox"}),
+            "enable_viz_desktop": forms.CheckboxInput(attrs={"class": "required checkbox"}),
+            "login_desktop_vnc_backend": forms.Select(
+                attrs={"class": "form-control"}
+            ),
+            "desktop_partition_mode": forms.Select(
+                attrs={"class": "form-control"}
+            ),
+            "desktop_instance_type": forms.Select(
+                # Reuses the same cascade as the controller/login rows and the
+                # partitions table (update_form.html's updateMachineAvailability),
+                # rather than a parallel machine-type control.
+                attrs={"class": "form-control machine_type_select"}
+            ),
+            "viz_desktop_vnc_backend": forms.Select(
+                attrs={"class": "form-control"}
+            ),
+            "desktop_gpu_type": forms.Select(
+                attrs={"class": "form-control"}
+            ),
+            "desktop_gpu_count": forms.NumberInput(
+                attrs={"class": "form-control", "min": 1}
+            ),
+            "desktop_placement_mode": forms.Select(
+                attrs={"class": "form-control"}
+            ),
+            "desktop_reservation_name": forms.TextInput(
+                attrs={"class": "form-control", "placeholder": "Optional"}
+            ),
         }
+
+    def clean(self):
+        cleaned_data = super().clean()
+
+        # Login nodes may be zero only when the visualisation desktop is the
+        # cluster's Slurm client instead. This must run unconditionally, not
+        # only when a desktop is enabled: a cluster with no login nodes and no
+        # desktop at all would have no Slurm client whatsoever.
+        num_login_nodes = cleaned_data.get("num_login_nodes")
+        if num_login_nodes is not None and num_login_nodes < 1:
+            if cleaned_data.get("enable_web_desktop"):
+                self.add_error(
+                    "num_login_nodes",
+                    "The login node desktop requires at least one login "
+                    "node.",
+                )
+            elif not cleaned_data.get("enable_viz_desktop"):
+                self.add_error(
+                    "num_login_nodes",
+                    "At least one login node is required unless the "
+                    "visualisation desktop is enabled, since the cluster "
+                    "needs a Slurm client.",
+                )
+
+        if not (
+            cleaned_data.get("enable_web_desktop")
+            or cleaned_data.get("enable_viz_desktop")
+        ):
+            return cleaned_data
+
+        if cleaned_data.get("viz_desktop_vnc_backend") == Cluster.DESKTOP_VNC_BACKEND_TIGER:
+            desktop_gpu_type = cleaned_data.get("desktop_gpu_type")
+            if desktop_gpu_type:
+                self.add_error(
+                    "viz_desktop_vnc_backend",
+                    "TigerVNC cannot use a GPU: it offloads GL only through "
+                    "-rendernode, which needs a DRM render node that GCE's "
+                    "NVIDIA images do not create. Choose TurboVNC or remove "
+                    "the GPU type.",
+                )
+
+        if not cleaned_data.get("enable_viz_desktop"):
+            return cleaned_data
+
+        desktop_gpu_count = cleaned_data.get("desktop_gpu_count")
+
+        cleaned_data["desktop_partition_mode"] = (
+            cleaned_data.get("desktop_partition_mode")
+            or Cluster.DESKTOP_PARTITION_MODE_DYNAMIC
+        )
+
+        if desktop_gpu_count is not None and desktop_gpu_count < 1:
+            self.add_error(
+                "desktop_gpu_count",
+                "Desktop GPU count must be at least 1.",
+            )
+
+        placement_mode = (
+            cleaned_data.get("desktop_placement_mode")
+            or Cluster.DESKTOP_PLACEMENT_CLUSTER_ZONE
+        )
+        cleaned_data["desktop_placement_mode"] = placement_mode
+        reservation_name = (cleaned_data.get("desktop_reservation_name") or "").strip()
+
+        if placement_mode == Cluster.DESKTOP_PLACEMENT_RESERVATION:
+            credential = cleaned_data.get("cloud_credential") or getattr(
+                self.instance, "cloud_credential", None
+            )
+            zone = cleaned_data.get("cloud_zone") or self.instance.cloud_zone
+            machine_type = cleaned_data.get("desktop_instance_type")
+
+            if not reservation_name:
+                self.add_error(
+                    "desktop_reservation_name",
+                    "A reservation name is required to use reserved capacity.",
+                )
+            elif not credential:
+                self.add_error(
+                    "desktop_reservation_name",
+                    "Select a cloud credential before choosing a reservation.",
+                )
+            elif not machine_type or not zone:
+                pass
+            else:
+                try:
+                    validate_gcp_reservation(
+                        reservation_name=reservation_name,
+                        cloud_credential=credential.detail,
+                        zone=zone,
+                        machine_type=machine_type,
+                        # One desktop node, whichever partition mode is in use.
+                        requested_nodes=1,
+                    )
+                except ValidationError as err:
+                    self.add_error("desktop_reservation_name", err)
+        else:
+            # Only reserved capacity uses the name, and leaving a stale one set
+            # would emit a reservation into the blueprint that the chosen mode
+            # says nothing about. The nodeset also rejects a reservation
+            # combined with extra zones, so the two can never both be emitted.
+            cleaned_data["desktop_reservation_name"] = ""
+
+        return cleaned_data
+
+
+def reservation_creation_help(reservation_name, zone, machine_type, node_count):
+    """How to create a reservation that would satisfy this request.
+
+    A name that does not exist is by far the most common mistake here, and
+    "does not exist" on its own leaves the user to work out the incantation -
+    including --require-specific-reservation, which is not the default but is
+    required, because a node only draws from a reservation it targets by name.
+    """
+    return (
+        "Create one with: gcloud compute reservations create "
+        f"{reservation_name or 'RESERVATION_NAME'} --zone {zone} "
+        f"--vm-count {max(int(node_count or 1), 1)} --machine-type {machine_type} "
+        "--require-specific-reservation"
+    )
+
+
+def validate_gcp_reservation(
+    reservation_name, cloud_credential, zone, machine_type, requested_nodes
+):
+    """Raise ValidationError unless the reservation can serve this request.
+
+    Shared by the compute partitions and the visualization desktop, which have
+    identical requirements of a reservation.
+    """
+    try:
+        reservations = cloud_info.get_vm_reservations(
+            "GCP", cloud_credential, None, zone
+        )
+    except Exception as err:  # pylint: disable=broad-except
+        logger.error(
+            "Could not list reservations in %s: %s", zone, err, exc_info=err
+        )
+        raise ValidationError(
+            f"Could not look up reservations in {zone}: {err}"
+        ) from err
+
+    creation_help = reservation_creation_help(
+        reservation_name, zone, machine_type, requested_nodes
+    )
+
+    if not reservations:
+        raise ValidationError(
+            f"No reservations exist in {zone}. {creation_help}"
+        )
+
+    matching_reservation = reservations.get(reservation_name)
+    if not matching_reservation:
+        # Naming what is there turns "wrong name" into a one-glance fix.
+        available = ", ".join(sorted(reservations)) or "none"
+        raise ValidationError(
+            f"Reservation '{reservation_name}' does not exist in {zone}. "
+            f"Reservations in that zone: {available}. {creation_help}"
+        )
+
+    properties = matching_reservation.get("instanceProperties", {})
+    reserved_machine_type = properties.get("machineType", "")
+    if reserved_machine_type != machine_type:
+        raise ValidationError(
+            f"Reservation '{reservation_name}' is for {reserved_machine_type} "
+            f"but this requests {machine_type}. A reservation only applies to "
+            "its own machine type, so either change the machine type to match "
+            "or create a separate reservation."
+        )
+
+    available_nodes = int(properties.get("availableCount", 0))
+    if requested_nodes > available_nodes:
+        raise ValidationError(
+            f"Reservation '{reservation_name}' has {available_nodes} "
+            f"instance(s) but {requested_nodes} were requested. Either reduce "
+            "the node count or resize the reservation."
+        )
+
+    if not matching_reservation.get("specificReservationRequired"):
+        raise ValidationError(
+            f"Reservation '{reservation_name}' is not a 'specific' "
+            "reservation, so nodes will not draw from it by name. Recreate it "
+            "with --require-specific-reservation. See "
+            "https://cloud.google.com/compute/docs/instances/"
+            "reservations-overview#how-reservations-work"
+        )
+
+    return matching_reservation
 
 
 class ClusterMountPointForm(forms.ModelForm):
@@ -294,11 +534,13 @@ class ClusterPartitionForm(forms.ModelForm):
         ] += " machine_type_select"
 
         def prep_dynamic_select(field, value):
+            if self.is_bound:
+                value = self.data.get(self.add_prefix(field), value)
             self.fields[field].widget.choices = [
                 ( value, value )
             ]
             self.fields[field].clean = lambda value: value
-        
+
         prep_dynamic_select(
             "boot_disk_type",
             self.instance.boot_disk_type
@@ -361,62 +603,24 @@ class ClusterPartitionForm(forms.ModelForm):
                 "Cannot use placement with static and auto-scaling nodes in the same node set."
             )  
 
-        # Reservation validation logic
+        # Reservation validation logic. "cluster" is deliberately not a form
+        # field - the caller only ever gets here through the cluster's inline
+        # formset, which sets self.instance.cluster_id to the parent before
+        # validation runs (BaseInlineFormSet._construct_form), so that is
+        # where the parent lives, not cleaned_data.
         reservation_name = cleaned_data.get("reservation_name")
         if reservation_name:
-            try:
-                cluster = cleaned_data.get('cluster')
-                cloud_credential = cluster.cloud_credential.detail
-                cloud_zone = cluster.cloud_zone
-
-                # logger.info(f"Cluster: {cluster}")
-                # logger.info(f"Cloud Credential: {cloud_credential}")
-                # logger.info(f"Cloud Zone: {cloud_zone}")
-
-                reservations = cloud_info.get_vm_reservations("GCP", cloud_credential, None, cloud_zone)
-
-                if not reservations:
-                    raise ValidationError("No reservations found for the specified zone.")
-
-                matching_reservation = reservations.get(reservation_name)
-
-                if not matching_reservation:
-                    raise ValidationError(
-                        f"Reservation {reservation_name} does not exist in the specified zone."
-                    )
-
-                if matching_reservation[
-                    "instanceProperties"
-                    ][
-                        "machineType"
-                        ] != cleaned_data["machine_type"]:
-                    raise ValidationError(
-                        f"Reservation {reservation_name} does not support the specified machine type. "
-                        f"Machine type: {cleaned_data['machine_type']}."
-                    )
-
-                total_requested_nodes = cleaned_data["dynamic_node_count"] + cleaned_data["static_node_count"]
-                available_nodes = matching_reservation.get("instanceProperties", {}).get("availableCount", 0)
-
-                if total_requested_nodes > available_nodes:
-                    raise ValidationError(
-                        f"Reservation {reservation_name} does not have enough available nodes."
-                        f"Requested: {total_requested_nodes}, Available: {available_nodes}"
-                    )
-
-                specific_reservation = matching_reservation.get("specificReservationRequired")
-                if specific_reservation == False:
-                    raise ValidationError(
-                        "You must use a 'specific' reservation type. "
-                        "Please read the following URL for more information about setting up reservations: "
-                        "https://cloud.google.com/compute/docs/instances/reservations-overview#how-reservations-work"
-                    )
-
-            except Exception as e:
-                logger.error(f"Error validating reservation: {reservation_name}. Exception: {e}")
-                raise ValidationError(
-                    f"Error validating reservation: {reservation_name}. Exception: {str(e)}"
-                )
+            cluster = self.instance.cluster
+            validate_gcp_reservation(
+                reservation_name=reservation_name,
+                cloud_credential=cluster.cloud_credential.detail,
+                zone=cluster.cloud_zone,
+                machine_type=cleaned_data["machine_type"],
+                requested_nodes=(
+                    cleaned_data["dynamic_node_count"]
+                    + cleaned_data["static_node_count"]
+                ),
+            )
 
         return cleaned_data
 

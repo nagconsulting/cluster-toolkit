@@ -68,11 +68,29 @@ from ..cluster_manager.clusterinfo import ClusterInfo
 from ..views.asyncview import BackendAsyncView
 
 from .view_utils import TerraformLogFile, GCSFile, StreamingFileView
+from .desktop import (
+    DESKTOP_JOB_FINAL_STATES,
+    _desktop_target_card,
+    _enabled_targets,
+)
 
 import logging
 import secrets
 
 logger = logging.getLogger(__name__)
+
+
+def _cluster_has_active_viz_desktop(cluster):
+    """Whether a visualisation desktop's Slurm job is still running.
+
+    Used to block cluster destroy while true, so the dynamic desktop node
+    is stopped deliberately rather than orphaned by tearing down the cluster
+    underneath it.
+    """
+    if not cluster.viz_desktop_enabled or not cluster.desktop_job_id:
+        return False
+    state = cluster.desktop_job_state or ""
+    return state not in DESKTOP_JOB_FINAL_STATES
 
 class ClusterPartitionDeleteView(LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
@@ -137,6 +155,13 @@ class ClusterDetailView(LoginRequiredMixin, generic.DetailView):
         context = super().get_context_data(**kwargs)
         context["navtab"] = "cluster"
         context["admin_view"] = admin_view
+        context["desktop_targets"] = [
+            _desktop_target_card(self.object, self.request.user, target)
+            for target in _enabled_targets(self.object)
+        ]
+        context["desktop_poll"] = any(
+            desktop["poll"] for desktop in context["desktop_targets"]
+        )
         # Perform extra query to populate instance types data
         # context['cluster_instance_types'] = \
         #     ClusterInstanceType.objects.filter(cluster=self.kwargs['pk'])
@@ -388,7 +413,13 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
             self.object.cloud_id = self.object.name + "-" + unique_str
             suffix = self.object.cloud_id.split("-")[-1]
             self.object.cloud_id = self.object.name + "-" + suffix
-        
+
+        if self.object.viz_desktop_enabled and not self.object.desktop_partition_mode:
+            self.object.desktop_partition_mode = Cluster.DESKTOP_PARTITION_MODE_DYNAMIC
+
+        if self.object.has_any_desktop and not self.object.desktop_proxy_secret:
+            self.object.desktop_proxy_secret = secrets.token_urlsafe(24)
+
         self.object.cloud_region = self.object.subnet.cloud_region
 
         machine_info = cloud_info.get_machine_types(
@@ -686,6 +717,9 @@ class ClusterDestroyView(LoginRequiredMixin, generic.DetailView):
         jobs = Job.objects.filter(application__in=applications)
         context["applications"] = applications
         context["jobs"] = jobs
+        context["active_viz_desktop"] = _cluster_has_active_viz_desktop(
+            context["cluster"]
+        )
         context["navtab"] = "cluster"
         return context
 
@@ -1121,6 +1155,18 @@ class BackendDestroyCluster(BackendAsyncView):
         await self.test_user_is_cluster_admin(request.user)
 
         args = await self.get_orm(pk)
+        (cluster,) = args
+        if _cluster_has_active_viz_desktop(cluster):
+            messages.error(
+                request,
+                "Stop the visualization desktop session before destroying "
+                f"the cluster. Desktop job {cluster.desktop_job_id} is "
+                f"still {(cluster.desktop_job_state or 'running').lower()}.",
+            )
+            return HttpResponseRedirect(
+                reverse("cluster-detail", kwargs={"pk": pk})
+            )
+
         await self.create_task("Destroy Cluster", *args)
         return HttpResponseRedirect(
             reverse("cluster-detail", kwargs={"pk": pk})

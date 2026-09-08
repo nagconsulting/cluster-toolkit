@@ -57,6 +57,17 @@ GCS_METADATA_HEADERS = {"Metadata-Flavor": "Google"}
 # Caching of oslogin users
 _OSLOGIN_CACHE = {}
 
+# Slurm job states from which a desktop allocation job will never resume.
+DESKTOP_JOB_FINAL_STATES = {
+    "CANCELLED",
+    "COMPLETED",
+    "FAILED",
+    "NODE_FAIL",
+    "OUT_OF_MEMORY",
+    "PREEMPTED",
+    "TIMEOUT",
+}
+
 # Set the env var for testing
 with open(
     os.environ.get("GHPCFE_CFG", "/usr/local/etc/ghpcfe_c2.yaml"),
@@ -989,6 +1000,300 @@ exit $result
         return (None, script, err.stdout, err.stderr)
 
 
+def _submit_desktop_job(username, uid, gid, job_dir, partition, job_name):
+    """Submit a long-lived desktop allocation job."""
+    outfile = job_dir / "desktop.out"
+    errfile = job_dir / "desktop.err"
+    group_name = grp.getgrgid(gid).gr_name
+
+    script = job_dir / "desktop_submit.sh"
+    script_fd = os.open(
+        script, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+    )
+    with os.fdopen(script_fd, "w", encoding="utf-8") as fileh:
+        fileh.write(
+            f"""#!/bin/bash
+#SBATCH --partition={partition}
+#SBATCH --uid={username}
+#SBATCH --gid={group_name}
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --exclusive
+#SBATCH --job-name={job_name}
+#SBATCH --output={outfile.as_posix()}
+#SBATCH --error={errfile.as_posix()}
+
+# No --get-user-env: under OS Login it can exceed GetEnvTimeout holding the job
+# as user_env_retrieval_failed_requeued_held.
+# This job only holds the allocation so the desktop node stays powered on.
+set -euo pipefail
+trap 'exit 0' TERM INT
+
+while true; do
+    sleep 600
+done
+"""
+        )
+
+    try:
+        subprocess.run(
+            ["scancel", "--name", job_name, "--user", username],
+            check=False,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except Exception as err:
+        logger.warning(
+            "Could not cancel a previous desktop job named %s for %s: %s",
+            job_name,
+            username,
+            err,
+        )
+
+    try:
+        proc = subprocess.run(
+            ["sbatch", script.as_posix()],
+            check=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if "Submitted batch job" in proc.stdout:
+            return (int(proc.stdout.split()[-1]), script, outfile, errfile)
+        return (None, script, proc.stdout, proc.stderr)
+    except subprocess.CalledProcessError as err:
+        logger.error("desktop sbatch exception", exc_info=err)
+        return (None, script, err.stdout, err.stderr)
+
+
+def _slurm_get_job_hostname(jobid):
+    try:
+        proc = subprocess.run(
+            ["squeue", "-h", "-j", str(jobid), "-o", "%N"],
+            check=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        hostlist = proc.stdout.strip()
+        if not hostlist or hostlist in ["(null)", "n/a", "None"]:
+            return (None, None)
+
+        proc = subprocess.run(
+            ["scontrol", "show", "hostnames", hostlist],
+            check=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        hostname = next(
+            (line.strip() for line in proc.stdout.splitlines() if line.strip()),
+            None,
+        )
+        if not hostname:
+            return (None, None)
+
+        return (hostname, socket.gethostbyname(hostname))
+    except Exception as err:
+        logger.error(
+            "Failed to determine hostname for desktop job %s", jobid, exc_info=err
+        )
+        return (None, None)
+
+
+def _desktop_service_ready(host, port, timeout=5):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                return True
+        except OSError:
+            time.sleep(1)
+    return False
+
+
+@cb_in_thread
+def cb_start_desktop(message, **kwargs):
+    if "ackid" not in message:
+        logger.error(
+            "Refusing START_DESKTOP message without ackid (message was %s)",
+            message,
+        )
+        return
+
+    ackid = message["ackid"]
+    response = {"ackid": ackid}
+    if not _verify_params(message, ["job_name", "login_uid", "partition"]):
+        logger.error("NOT STARTING DESKTOP. Missing required field(s)")
+        response["status"] = "e"
+        response["desktop_state"] = "FAILED"
+        response["message"] = "Missing Key Info"
+        send_message("ACK", response)
+        return
+
+    listen_port = int(message.get("desktop_service_port", 6080))
+    response["desktop_service_port"] = listen_port
+
+    if int(message["login_uid"]) == 0:
+        (username, uid, gid, homedir) = ("root", 0, 0, "/home/root_jobs")
+    else:
+        try:
+            (username, uid, gid, homedir) = _verify_oslogin_user(
+                message["login_uid"]
+            )
+        except KeyError:
+            logger.error(
+                "User UID %s not OS-Login allowed", message["login_uid"]
+            )
+            response["status"] = "e"
+            response["desktop_state"] = "FAILED"
+            response["message"] = (
+                "User is not allowed to start a desktop on this cluster"
+            )
+            send_message("ACK", response)
+            return
+
+    # Create the directories as the user rather than as root
+    job_dir = Path(homedir) / "desktop" / str(config["cluster_id"])
+    try:
+        subprocess.run(
+            ["runuser", "-u", username, "--", "mkdir", "-p", job_dir],
+            check=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as err:
+        logger.error(
+            "Could not create desktop directory %s as %s: %s",
+            job_dir,
+            username,
+            (err.stderr or "").strip() or err,
+        )
+        response["status"] = "e"
+        response["desktop_state"] = "FAILED"
+        response["message"] = "Could not create the desktop directory in your home"
+        send_message("ACK", response)
+        return
+
+    (slurm_jobid, script_path, outfile, errfile) = _submit_desktop_job(
+        username=username,
+        uid=uid,
+        gid=gid,
+        job_dir=job_dir,
+        partition=message["partition"],
+        job_name=message["job_name"],
+    )
+    if not slurm_jobid:
+        logger.error("Failed to run desktop batch submission")
+        _upload_log_blobs(
+            {
+                f"desktop/{config['cluster_id']}/{script_path.name}": script_path.read_text(),
+                f"desktop/{config['cluster_id']}/stdout": outfile,
+                f"desktop/{config['cluster_id']}/stderr": errfile,
+            }
+        )
+        response["status"] = "e"
+        response["desktop_state"] = "FAILED"
+        send_message("ACK", response)
+        return
+
+    logger.info("Desktop queued as slurm job %s", slurm_jobid)
+    response["status"] = "q"
+    response["desktop_job_id"] = slurm_jobid
+    response["desktop_state"] = "PENDING"
+    send_message("UPDATE", response)
+
+    state = "PENDING"
+    while state in ["PENDING", "CONFIGURING"]:
+        time.sleep(15)
+        state = _slurm_get_job_state(slurm_jobid)
+
+    desktop_ready = False
+    job_started = state == "RUNNING"
+    if state == "RUNNING":
+        logger.info("Desktop job %s is running; waiting for broker", slurm_jobid)
+        response["status"] = "p"
+        response["desktop_state"] = "BOOTSTRAPPING"
+        send_message("UPDATE", response)
+
+    while state == "RUNNING":
+        if not desktop_ready:
+            hostname, host_ip = _slurm_get_job_hostname(slurm_jobid)
+            if hostname and host_ip and _desktop_service_ready(host_ip, listen_port):
+                response["status"] = "r"
+                response["desktop_state"] = "RUNNING"
+                response["desktop_service_name"] = hostname
+                response["desktop_service_host"] = host_ip
+                send_message("UPDATE", response)
+                desktop_ready = True
+
+        time.sleep(15)
+        state = _slurm_get_job_state(slurm_jobid)
+
+    final_state = state or "FAILED"
+    if final_state in ["PENDING", "CONFIGURING"] and job_started:
+        final_state = "NODE_FAIL" if not desktop_ready else "FAILED"
+    logger.info(
+        "Desktop job %s completed with result %s", slurm_jobid, final_state
+    )
+    response["status"] = (
+        "c" if final_state in ["CANCELLED", "COMPLETED"] else "e"
+    )
+    response["desktop_job_id"] = slurm_jobid
+    response["desktop_state"] = final_state
+    response["desktop_service_host"] = None
+    response["desktop_service_name"] = None
+    response["desktop_service_zone"] = None
+    send_message("ACK", response)
+
+
+@cb_in_thread
+def cb_stop_desktop(message, **kwargs):
+    if "ackid" not in message:
+        logger.error(
+            "Refusing STOP_DESKTOP message without ackid (message was %s)",
+            message,
+        )
+        return
+
+    ackid = message["ackid"]
+    response = {"ackid": ackid}
+    if not _verify_params(message, ["desktop_job_id"]):
+        response["status"] = "e"
+        response["desktop_state"] = "FAILED"
+        response["message"] = "Missing desktop_job_id"
+        send_message("ACK", response)
+        return
+
+    desktop_job_id = int(message["desktop_job_id"])
+    response["desktop_job_id"] = desktop_job_id
+    state = _slurm_get_job_state(desktop_job_id)
+    if state is None or state in DESKTOP_JOB_FINAL_STATES:
+        response["status"] = "c"
+        response["desktop_state"] = "CANCELLED"
+        send_message("ACK", response)
+        return
+
+    try:
+        subprocess.run(
+            ["scancel", str(desktop_job_id)],
+            check=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        response["status"] = "c"
+        response["desktop_state"] = "STOPPING"
+    except subprocess.CalledProcessError as err:
+        logger.error("Failed to stop desktop job %s", desktop_job_id, exc_info=err)
+        response["status"] = "e"
+        response["desktop_state"] = "FAILED"
+        response["message"] = err.stderr or err.stdout
+    send_message("ACK", response)
+
+
 @cb_in_thread
 def cb_run_job(message, **kwargs):
     """Handler for job submission and monitoring"""
@@ -1274,6 +1579,8 @@ callback_map = {
     "PING": cb_ping,
     "PONG": cb_pong,
     "SYNC": cb_sync,
+    "START_DESKTOP": cb_start_desktop,
+    "STOP_DESKTOP": cb_stop_desktop,
     "UPDATE": cb_update,
     "SPACK_INSTALL": cb_spack_install,
     "INSTALL_APPLICATION": cb_install_app,

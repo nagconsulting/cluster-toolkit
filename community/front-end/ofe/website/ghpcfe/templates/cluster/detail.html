@@ -20,6 +20,9 @@
 {% if cluster.status == "c" or cluster.status == "i" or cluster.status == "t" %}
 <meta http-equiv="refresh" content="15" />
 {% endif %}
+{% if desktop_poll %}
+<meta http-equiv="refresh" content="15" />
+{% endif %}
 {% if object.status == "c" or object.status == "t" %}
 {# aka, if Terraform running, let's show the TF log #}
 <script>
@@ -136,6 +139,31 @@
 </div>
 {% endif %}
 </p>
+
+{% if desktop_targets %}
+<hr>
+<p style="text-decoration: underline; font-size: large;">Remote Desktop</p>
+{% for desktop in desktop_targets %}
+<div class="alert alert-{{ desktop.status_level }}" style="margin-bottom: 0.5rem;">
+  <p><b>{{ desktop.label }}</b> &mdash; {{ desktop.state }}</p>
+  <p>{{ desktop.summary }}</p>
+  <a href="{{ desktop.url }}" class="btn btn-primary">Open {{ desktop.label }}</a>
+  {% if object.status == "r" and desktop.can_start %}
+  <form method="post" action="{% url 'cluster-desktop-power' object.id desktop.key 'start' %}" style="display: inline;">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-outline-primary">Start</button>
+  </form>
+  {% endif %}
+  {% if object.status == "r" and desktop.can_stop %}
+  <form method="post" action="{% url 'cluster-desktop-power' object.id desktop.key 'stop' %}" style="display: inline;"
+        onsubmit="return confirm('Stopping the desktop powers the node down. Any other users connected to it will lose their sessions. Proceed?');">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-outline-secondary">Stop</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
 
 <div class="form-group">
   <div class="custom-control custom-checkbox">

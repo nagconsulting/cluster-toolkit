@@ -93,6 +93,11 @@ repos:
     - more-executors
 
     - google-cloud-tpu
+
+    # desktop-broker: its own tests import these directly.
+    - aiohttp
+    - google-auth
+    - cryptography
     types: [python]
     pass_filenames: false
 

@@ -1,0 +1,36 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+{% extends "base_generic.html" %}
+
+{% block content %}
+<h2>Remote Desktops</h2>
+<p><b>Cluster:</b> {{ object.name }}</p>
+<div class="row">
+  {% for desktop in desktop_targets %}
+  <div class="col-md-6" style="margin-bottom: 1rem;">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">{{ desktop.label }}</h5>
+        <p><b>State:</b> {{ desktop.state }}</p>
+        <p class="card-text">{{ desktop.summary }}</p>
+        <a href="{{ desktop.url }}" class="btn btn-primary">Open {{ desktop.label }}</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

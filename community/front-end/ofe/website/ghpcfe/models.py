@@ -663,6 +663,38 @@ class Image(CloudResource):
 class Cluster(CloudResource):
     """Model representing a cluster"""
 
+    DESKTOP_PARTITION_MODE_DYNAMIC = "dynamic"
+    DESKTOP_PARTITION_MODE_STATIC = "static"
+    DESKTOP_PARTITION_MODE_CHOICES = (
+        (DESKTOP_PARTITION_MODE_DYNAMIC, "Dynamic Single Node"),
+        (DESKTOP_PARTITION_MODE_STATIC, "Static Single Node"),
+    )
+
+    # Where the desktop node may be created. One field rather than independent
+    # settings because the underlying nodeset rejects a reservation combined
+    # with additional zones - a reservation is zonal, so it cannot guarantee
+    # anything about a node placed in another zone. Expressing that as a single
+    # choice makes the exclusion structural instead of something validation has
+    # to catch, and leaves blueprint generation a single switch.
+    DESKTOP_PLACEMENT_CLUSTER_ZONE = "cluster_zone"
+    DESKTOP_PLACEMENT_ANY_ZONE = "any_zone"
+    DESKTOP_PLACEMENT_RESERVATION = "reservation"
+    DESKTOP_PLACEMENT_CHOICES = (
+        (DESKTOP_PLACEMENT_CLUSTER_ZONE, "Cluster zone only"),
+        (DESKTOP_PLACEMENT_ANY_ZONE, "Any zone in the region"),
+        (DESKTOP_PLACEMENT_RESERVATION, "Reserved capacity"),
+    )
+
+    # Remote desktop VNC backend. The remote-desktop-2 broker validates
+    # exactly these two (community/modules/internal/desktop-broker
+    # variables.tf vnc_backend).
+    DESKTOP_VNC_BACKEND_TIGER = "tigervnc"
+    DESKTOP_VNC_BACKEND_TURBO = "turbovnc"
+    DESKTOP_VNC_BACKEND_CHOICES = (
+        (DESKTOP_VNC_BACKEND_TIGER, "TigerVNC (software rendering)"),
+        (DESKTOP_VNC_BACKEND_TURBO, "TurboVNC (GPU-accelerated via VirtualGL)"),
+    )
+
     name = models.CharField(
         max_length=17,
         help_text="Enter a name for the cluster",
@@ -788,6 +820,147 @@ class Cluster(CloudResource):
         null=True,
         blank=True,
     )
+    enable_web_desktop = models.BooleanField(
+        default=False,
+        help_text=(
+            "Enable per-user browser desktop sessions on the cluster login "
+            "nodes behind the OFE proxy?"
+        ),
+    )
+    enable_viz_desktop = models.BooleanField(
+        default=False,
+        help_text=(
+            "Enable a separate visualization desktop target backed by a "
+            "dedicated Slurm partition node?"
+        ),
+    )
+    desktop_partition_mode = models.CharField(
+        max_length=16,
+        choices=DESKTOP_PARTITION_MODE_CHOICES,
+        default=DESKTOP_PARTITION_MODE_DYNAMIC,
+        help_text=(
+            "Choose whether the visualization desktop uses one dynamic node "
+            "allocated on demand or one always-provisioned static node."
+        ),
+    )
+    desktop_instance_type = models.CharField(
+        max_length=40,
+        help_text="GCP Instance Type name for the visualization desktop host.",
+        default="n2-standard-4",
+    )
+    login_desktop_vnc_backend = models.CharField(
+        max_length=16,
+        choices=DESKTOP_VNC_BACKEND_CHOICES,
+        default=DESKTOP_VNC_BACKEND_TIGER,
+        help_text="VNC backend used for the login-node desktop.",
+    )
+    viz_desktop_vnc_backend = models.CharField(
+        max_length=16,
+        choices=DESKTOP_VNC_BACKEND_CHOICES,
+        default=DESKTOP_VNC_BACKEND_TIGER,
+        help_text=(
+            "VNC backend used for the visualization desktop. TurboVNC is "
+            "required to use a GPU: TigerVNC offloads GL only through "
+            "-rendernode, which needs a DRM render node that GCE's NVIDIA "
+            "images do not create."
+        ),
+    )
+    desktop_gpu_type = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional GPU type for the visualization desktop host, for "
+            "example nvidia-l4."
+        ),
+    )
+    desktop_gpu_count = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        default=1,
+        help_text="Number of GPUs to attach to the visualization desktop host.",
+    )
+    desktop_placement_mode = models.CharField(
+        max_length=16,
+        choices=DESKTOP_PLACEMENT_CHOICES,
+        default=DESKTOP_PLACEMENT_CLUSTER_ZONE,
+        help_text=(
+            "Where the visualization desktop may be created. GPU capacity is "
+            "per-zone and runs out without warning, which leaves the desktop "
+            "queued indefinitely: allowing any zone in the region lets Google "
+            "Cloud pick one with capacity, at the cost of cross-zone network "
+            "charges, while reserved capacity guarantees the machine is there "
+            "but bills whether or not the desktop is running."
+        ),
+    )
+    desktop_reservation_name = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text=(
+            "Name of an existing Compute Engine reservation in the cluster's "
+            "zone, used only with the reserved-capacity placement mode. The "
+            "reservation must be specific, and must match the desktop's "
+            "machine type."
+        ),
+    )
+    login_desktop_service_host = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+    )
+    login_desktop_service_name = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+    )
+    login_desktop_service_zone = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+    )
+    login_desktop_service_port = models.PositiveIntegerField(
+        default=6080,
+    )
+    desktop_service_host = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+    )
+    desktop_service_name = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+    )
+    desktop_service_port = models.PositiveIntegerField(
+        default=6080,
+    )
+    desktop_job_id = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+    )
+    desktop_job_state = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+    )
+    desktop_started_by = models.ForeignKey(
+        User,
+        help_text=(
+            "Who started the running desktop job. The job runs as this user, "
+            "so only they and admins may stop it. Unrelated to cluster "
+            "ownership: any authorised user may start the desktop while it "
+            "is stopped."
+        ),
+        related_name="started_desktops",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+    )
+    desktop_proxy_secret = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+    )
     login_node_image = models.ForeignKey(
         Image,
         related_name="login_node_image",
@@ -833,6 +1006,74 @@ class Cluster(CloudResource):
 
     def get_access_key(self):
         return Token.objects.get(user=self.owner)
+
+    @property
+    def login_desktop_enabled(self):
+        return self.enable_web_desktop
+
+    @property
+    def viz_desktop_enabled(self):
+        return self.enable_viz_desktop
+
+    @property
+    def has_any_desktop(self):
+        return self.login_desktop_enabled or self.viz_desktop_enabled
+
+    @property
+    def desktop_uses_login_node(self):
+        return self.login_desktop_enabled
+
+    @property
+    def desktop_uses_viz_host(self):
+        return self.viz_desktop_enabled
+
+    @property
+    def desktop_uses_viz_partition(self):
+        return self.viz_desktop_enabled
+
+    @property
+    def viz_desktop_uses_dynamic_partition(self):
+        return self.desktop_partition_mode == self.DESKTOP_PARTITION_MODE_DYNAMIC
+
+    @property
+    def desktop_uses_dynamic_partition(self):
+        return self.viz_desktop_uses_dynamic_partition
+
+    @property
+    def viz_desktop_partition_name(self):
+        if self.id:
+            return f"ghpcfe-viz-{self.id}"
+        return "ghpcfe-viz"
+
+    @property
+    def desktop_partition_name(self):
+        return self.viz_desktop_partition_name
+
+    @property
+    def viz_desktop_job_name(self):
+        if self.id:
+            return f"ghpcfe-desktop-{self.id}"
+        return "ghpcfe-desktop"
+
+    @property
+    def desktop_job_name(self):
+        return self.viz_desktop_job_name
+
+    @property
+    def viz_desktop_has_gpu(self):
+        return bool(self.desktop_gpu_type and self.desktop_gpu_count > 0)
+
+    @property
+    def login_desktop_vnc_backend_display(self):
+        if self.login_desktop_vnc_backend == self.DESKTOP_VNC_BACKEND_TURBO:
+            return "TurboVNC"
+        return "TigerVNC"
+
+    @property
+    def viz_desktop_vnc_backend_display(self):
+        if self.viz_desktop_vnc_backend == self.DESKTOP_VNC_BACKEND_TURBO:
+            return "TurboVNC"
+        return "TigerVNC"
 
     def total_cost(self, date_range=None):
         # Django won't accept None on a kwarg to ignore it...

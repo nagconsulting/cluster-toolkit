@@ -187,6 +187,12 @@ variable "slurm_auth_mode" {
   default     = "none"
 }
 
+variable "machine_configs" {
+  description = "Definition of GCE machine types and counts"
+  type        = any
+  default     = {}
+}
+
 variable "guest_accelerator" {
   description = "List of the type and count of accelerator cards attached to the instance."
   type = list(object({

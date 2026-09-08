@@ -179,7 +179,21 @@ def blueprint_context(cluster, **overrides):
     than restated here, so the rule stays under test rather than duplicated.
     The helper reads only ``self.cluster``, so an unbound call is enough.
     """
+    from django.template import engines
+
     from ghpcfe.cluster_manager.clusterinfo import ClusterInfo
+
+    # login_yaml is computed via the real ClusterInfo methods, not restated
+    # here, for the same reason as the GPU-acceleration flag below: the
+    # rendering rule stays under test in one place. Both methods read only
+    # self.cluster/self.env/self.indent_text, so a namespace stand-in for
+    # self is enough without a full ClusterInfo (which needs a saved cluster
+    # row and a config-backed cluster_dir).
+    fake_self = SimpleNamespace(cluster=cluster, env=engines["django"])
+    fake_self.indent_text = lambda text, level: ClusterInfo.indent_text(
+        fake_self, text, level
+    )
+    login_yaml, _login_refs = ClusterInfo._prepare_login_yaml(fake_self)
 
     context = {
         "project_id": cluster.project_id,
@@ -193,10 +207,11 @@ def blueprint_context(cluster, **overrides):
         "desktop_allowed_ingress_cidrs": [],
         "desktop_identity_mode": "trusted_proxy",
         "viz_desktop_gpu_acceleration": ClusterInfo._viz_desktop_gpu_acceleration(
-            SimpleNamespace(cluster=cluster)
+            fake_self
         ),
         "controller_image_yaml": "",
         "login_image_yaml": "",
+        "login_yaml": login_yaml,
         "cluster": cluster,
         "controller_uses": "    - hpc_network",
         "login_uses": "    - hpc_network",

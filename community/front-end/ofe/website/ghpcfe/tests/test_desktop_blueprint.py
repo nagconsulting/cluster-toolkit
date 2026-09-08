@@ -160,14 +160,25 @@ def test_the_firewall_rule_is_scoped_to_the_supplied_cidrs():
     assert rule["allow"] == [{"protocol": "tcp", "ports": ["6080"]}]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="optional login nodes arrive with Milestone 4; the login module is "
-    "currently emitted unconditionally",
-)
 def test_zero_login_nodes_omits_the_login_module():
+    """The viz desktop is a Slurm client on its own, so the cluster does not
+    need a login node - and the controller must not reference a module that
+    was never emitted."""
     modules = modules_by_id(
         fake_cluster(enable_viz_desktop=True, num_login_nodes=0)
     )
 
     assert "slurm_login" not in modules
+    controller_settings = modules["slurm_controller"]["settings"]
+    assert "login_startup_script" not in controller_settings
+    assert "login_startup_scripts_timeout" not in controller_settings
+
+
+def test_one_login_node_still_renders_the_login_module():
+    modules = modules_by_id(fake_cluster(num_login_nodes=1))
+
+    assert modules["slurm_login"]["settings"]["num_instances"] == 1
+    assert (
+        "login_startup_script"
+        in modules["slurm_controller"]["settings"]
+    )

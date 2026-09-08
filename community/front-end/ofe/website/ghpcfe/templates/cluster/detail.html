@@ -64,6 +64,7 @@
   {% endif %}
 </p>
 <p><b>Controller node type:</b> {{object.controller_instance_type }} with {{ object.controller_disk_size }} GB {{ object.controller_disk_type }} boot disk.</p>
+{% if object.num_login_nodes %}
 <p><b>Login nodes:</b> {{ object.num_login_nodes }}{% if object.login_nodes.count %}:
   {% for login in object.login_nodes.all %}
   {% if login.public_ip %}
@@ -76,6 +77,7 @@
   {% endif %}
 </p>
 <p><b>Login node(s) type:</b> {{object.login_node_instance_type }} with {{ object.login_node_disk_size }} GB {{ object.login_node_disk_type }} boot disk.</p>
+{% endif %}
 <p id="status-p">
   <b>Status:</b>
   {% if cluster.status == "c" or cluster.status == "i" or cluster.status == "t" or cluster.status == "n" %}

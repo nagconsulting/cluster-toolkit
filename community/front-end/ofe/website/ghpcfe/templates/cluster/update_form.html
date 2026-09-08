@@ -768,6 +768,31 @@ function deletePartition(partitionId, row) {
 </script>
 
 <script>
+  // Grey out and disable the login-node fields (all but the count itself)
+  // when the cluster has zero login nodes - the visualisation desktop is
+  // standing in as the Slurm client instead. Hide, never remove: the row
+  // must stay in the DOM with its .login_row class intact, because
+  // updateDiskAvailability() iterates ".part_formset_row, .login_row,
+  // .controller_row" and depends on it being there.
+  const numLoginNodesInput = document.getElementById("id_num_login_nodes");
+  const loginRow = document.querySelector(".login_row");
+
+  function updateLoginRowAvailability() {
+    const hasLoginNodes = parseInt(numLoginNodesInput.value, 10) > 0;
+    loginRow.querySelectorAll("td:not(:first-child)").forEach(function (cell) {
+      cell.style.opacity = hasLoginNodes ? "1" : "0.5";
+      cell.querySelectorAll("input, select").forEach(function (field) {
+        field.disabled = !hasLoginNodes;
+      });
+    });
+  }
+
+  numLoginNodesInput.addEventListener("input", updateLoginRowAvailability);
+  // Initialize the correct state on page load:
+  updateLoginRowAvailability();
+</script>
+
+<script>
   // Once the document (and formset) is ready:
   $(document).ready(function () {
 

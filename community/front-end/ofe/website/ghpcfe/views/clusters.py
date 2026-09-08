@@ -467,37 +467,45 @@ class ClusterUpdateView(LoginRequiredMixin, UpdateView):
             form.add_error("controller_disk_type", "Invalid Disk Type")
             return self.form_invalid(form)
 
-        try:
-            my_info = disk_info[self.object.login_node_disk_type]
-            if self.object.login_node_disk_size < my_info["minSizeGB"]:
-                form.add_error(
-                    "login_node_disk_size",
-                    "Minimum Disk Size for "
-                    f"{self.object.login_node_disk_type} is "
-                    f"{my_info['minSizeGB']}"
-                )
-                return self.form_invalid(form)
-            if self.object.login_node_disk_size > my_info["maxSizeGB"]:
-                form.add_error(
-                    "login_node_disk_size",
-                    "Maximum Disk Size for "
-                    f"{self.object.login_node_disk_type} is "
-                    f"{my_info['maxSizeGB']}"
-                )
-                return self.form_invalid(form)
+        # No login nodes means no login disk to validate - the viz desktop
+        # is standing in as the cluster's Slurm client instead (ClusterForm
+        # already rejects num_login_nodes == 0 without it).
+        if self.object.num_login_nodes > 0:
+            try:
+                my_info = disk_info[self.object.login_node_disk_type]
+                if self.object.login_node_disk_size < my_info["minSizeGB"]:
+                    form.add_error(
+                        "login_node_disk_size",
+                        "Minimum Disk Size for "
+                        f"{self.object.login_node_disk_type} is "
+                        f"{my_info['minSizeGB']}"
+                    )
+                    return self.form_invalid(form)
+                if self.object.login_node_disk_size > my_info["maxSizeGB"]:
+                    form.add_error(
+                        "login_node_disk_size",
+                        "Maximum Disk Size for "
+                        f"{self.object.login_node_disk_type} is "
+                        f"{my_info['maxSizeGB']}"
+                    )
+                    return self.form_invalid(form)
 
-        except KeyError:
-            form.add_error("login_node_disk_type", "Invalid Disk Type")
-            return self.form_invalid(form)
+            except KeyError:
+                form.add_error("login_node_disk_type", "Invalid Disk Type")
+                return self.form_invalid(form)
 
         # Reject controller/login machine types too small to run node setup.
         # The OFE bootstrap (yum + ansible + spack) OOMs on ~2 GB nodes and dies
         # silently, leaving the cluster stuck initializing. Require at least 4 GB.
         min_ram_mb = 4096
-        for field_name, instance_type in [
+        machine_checks = [
             ("controller_instance_type", self.object.controller_instance_type),
-            ("login_node_instance_type", self.object.login_node_instance_type),
-        ]:
+        ]
+        if self.object.num_login_nodes > 0:
+            machine_checks.append(
+                ("login_node_instance_type", self.object.login_node_instance_type)
+            )
+        for field_name, instance_type in machine_checks:
             try:
                 node_memory = machine_info[instance_type]["memory"]
             except KeyError:

@@ -521,6 +521,21 @@ class ClusterInfo:
             return []
         return [zone for zone in zones if zone != self.cluster.cloud_zone]
 
+    def _prepare_login_yaml(self):
+        # Login nodes are optional when the visualisation desktop provides the
+        # cluster's Slurm client instead (ClusterForm.clean() enforces that
+        # enable_web_desktop, which needs the login node, cannot coexist with
+        # zero login nodes). Suppressing the whole module and its controller
+        # `use:` reference follows the same shape as _prepare_cloudsql_yaml.
+        if self.cluster.num_login_nodes < 1:
+            return "", []
+        template = self.env.get_template('blueprint/login_config.yaml.j2')
+        context = {
+            'cluster': self.cluster,
+        }
+        rendered_yaml = template.render(context)
+        return self.indent_text(rendered_yaml, 1), ['slurm_login']
+
     def _prepare_cloudsql_yaml(self):
         if not self.cluster.use_cloudsql:
             return "", []
@@ -546,6 +561,7 @@ class ClusterInfo:
             desktop_network_yaml, desktop_allowed_ingress_cidrs = (
                 self._prepare_desktop_networking()
             )
+            login_yaml, login_refs = self._prepare_login_yaml()
             partitions_yaml, partitions_refs = self._prepare_ghpc_partitions(filesystems_refs)
             desktop_partition_yaml, desktop_partition_refs = (
                 self._prepare_desktop_partition(filesystems_refs)
@@ -557,6 +573,7 @@ class ClusterInfo:
             template = self.env.get_template('blueprint/cluster_config.yaml.j2')
             controller_uses_refs = (
                 ["hpc_network"]
+                + login_refs
                 + partitions_refs
                 + desktop_partition_refs
                 + filesystems_refs
@@ -569,6 +586,7 @@ class ClusterInfo:
                 "desktop_network_yaml": desktop_network_yaml,
                 "desktop_allowed_ingress_cidrs": desktop_allowed_ingress_cidrs,
                 "desktop_partition_yaml": desktop_partition_yaml,
+                "login_yaml": login_yaml,
                 # The only mode implemented so far. A context var rather than
                 # a literal in the template so adding "iap" later is a value
                 # change here, not a template restructure.

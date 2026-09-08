@@ -134,13 +134,16 @@ deployment_groups:
         - https://www.googleapis.com/auth/pubsub
       compute_startup_scripts_timeout: 1200
       controller_startup_scripts_timeout: 1200
+{% if cluster.num_login_nodes %}
 {% if cluster.login_desktop_enabled %}
       login_startup_scripts_timeout: 1200
+{% endif %}
 {% endif %}
       controller_startup_script: |
         #!/bin/bash
         echo "******************************************** CALLING CONTROLLER STARTUP"
         gcloud storage cat gs://{{ startup_bucket }}/clusters/{{ cluster.id }}/bootstrap_controller.sh | bash
+{% if cluster.num_login_nodes %}
 {% if cluster.login_desktop_enabled %}
       login_startup_script: $(login_desktop_startup.startup_script)
 {% else %}
@@ -149,33 +152,12 @@ deployment_groups:
         echo "******************************************** CALLING LOGIN STARTUP"
         gcloud storage cat gs://{{ startup_bucket }}/clusters/{{ cluster.id }}/bootstrap_login.sh | bash
 {% endif %}
+{% endif %}
     use:
-    - slurm_login
 {{ controller_uses | safe }}
 
-  - source: community/modules/scheduler/schedmd-slurm-gcp-v6-login
-    kind: terraform
-    id: slurm_login
-    settings:
-      instance_image:
-        family: slurm-gcp-6-12-hpc-rocky-linux-9
-        project: schedmd-slurm-public
-      num_instances: {{ cluster.num_login_nodes }}
-      subnetwork_self_link: "projects/{{ cluster.project_id }}/regions/{{ cluster.cloud_region }}/subnetworks/{{ cluster.subnet.cloud_id }}"
-      machine_type: {{ cluster.login_node_instance_type }}
-      disk_type: {{ cluster.login_node_disk_type }}
-      disk_size_gb: {{ cluster.login_node_disk_size }}
-      {{ login_image_yaml | safe }}
-      service_account_email: $(hpc_service_account.service_account_email)
-      service_account_scopes:
-        - https://www.googleapis.com/auth/cloud-platform
-        - https://www.googleapis.com/auth/monitoring.write
-        - https://www.googleapis.com/auth/logging.write
-        - https://www.googleapis.com/auth/devstorage.read_write
-{% if cluster.login_desktop_enabled %}
-      tags:
-        - ghpc-novnc-desktop
-{% endif %}
+{{ login_yaml | safe }}
+
 {% if cluster.has_any_desktop %}
 {{ desktop_network_yaml | safe }}
 {% endif %}

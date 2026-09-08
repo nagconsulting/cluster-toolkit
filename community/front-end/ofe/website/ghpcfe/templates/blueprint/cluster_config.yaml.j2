@@ -86,6 +86,9 @@ deployment_groups:
       novnc_identity_mode: {{ desktop_identity_mode }}
       slurm_auth_mode: auto
       vnc_backend: "{{ cluster.viz_desktop_vnc_backend }}"
+{% if viz_desktop_gpu_acceleration %}
+      enable_gpu_acceleration: true
+{% endif %}
 
   - source: modules/scripts/startup-script
     kind: terraform

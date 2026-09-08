@@ -464,6 +464,26 @@ class ClusterInfo:
         rendered_yaml = self.indent_text(template.render(context), 1)
         return rendered_yaml, [part_id]
 
+    def _viz_desktop_gpu_acceleration(self):
+        """Whether the visualisation desktop renders with hardware OpenGL.
+
+        Provisioning the GPU is not enough on its own: novnc-runtime defaults
+        this off, and with it off the session renders on the CPU while the GPU
+        sits idle. TurboVNC is a hard requirement - TigerVNC has no working
+        offload path on these images, which ClusterForm.clean() also rejects -
+        so a GPU by itself must not turn it on.
+        """
+        if not self.cluster.viz_desktop_enabled:
+            return False
+        has_gpu = (
+            self.cluster.viz_desktop_has_gpu
+            or _machine_type_has_builtin_gpu(self.cluster.desktop_instance_type)
+        )
+        return has_gpu and (
+            self.cluster.viz_desktop_vnc_backend
+            == Cluster.DESKTOP_VNC_BACKEND_TURBO
+        )
+
     def _desktop_extra_zones(self, machine_type):
         """Additional zones the desktop node may be created in.
 
@@ -553,6 +573,9 @@ class ClusterInfo:
                 # a literal in the template so adding "iap" later is a value
                 # change here, not a template restructure.
                 "desktop_identity_mode": "trusted_proxy",
+                "viz_desktop_gpu_acceleration": (
+                    self._viz_desktop_gpu_acceleration()
+                ),
                 "partitions_yaml": partitions_yaml,
                 "artifact_registry_yaml": artifact_registry_yaml,
                 "cloudsql_yaml": cloudsql_yaml,

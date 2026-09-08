@@ -876,6 +876,47 @@ function deletePartition(partitionId, row) {
 </script>
 
 <script>
+  // Show the visualisation-desktop config table only while it is enabled,
+  // toggleRegistrySection()-style, and default its VNC backend to match
+  // whether a GPU is selected - TigerVNC cannot use one (ClusterForm.clean()
+  // already rejects that combination server-side; this is just a sensible
+  // starting point). The default backs off as soon as the user picks the
+  // backend themselves, so it never overrides a deliberate choice.
+  const enableVizDesktopCheckbox = document.getElementById("id_enable_viz_desktop");
+  const vizDesktopSection = document.getElementById("viz-desktop-section");
+  const vizDesktopGpuType = document.getElementById("viz_desktop-0-GPU_type");
+  const vizDesktopVncBackend = document.getElementById("id_viz_desktop_vnc_backend");
+  let vizDesktopUserInteracted = false;
+
+  function toggleVizDesktopSection() {
+    const showing = enableVizDesktopCheckbox.checked;
+    vizDesktopSection.style.display = showing ? "block" : "none";
+    if (showing) {
+      // updateMachineAvailability() only populates $(".machine_type_select:visible"),
+      // so a select that was hidden when it last ran needs a fresh call now
+      // that it can be seen, or it is left showing only its stale initial option.
+      updateMachineAvailability();
+    }
+  }
+
+  function autoSelectVizDesktopVncBackend() {
+    if (vizDesktopUserInteracted) {
+      return;
+    }
+    vizDesktopVncBackend.value = vizDesktopGpuType.value ? "turbovnc" : "tigervnc";
+  }
+
+  enableVizDesktopCheckbox.addEventListener("change", toggleVizDesktopSection);
+  vizDesktopGpuType.addEventListener("change", autoSelectVizDesktopVncBackend);
+  vizDesktopVncBackend.addEventListener("change", function () {
+    vizDesktopUserInteracted = true;
+  });
+
+  // Initialize the correct state on page load:
+  toggleVizDesktopSection();
+</script>
+
+<script>
   // Once the document (and formset) is ready:
   $(document).ready(function () {
 

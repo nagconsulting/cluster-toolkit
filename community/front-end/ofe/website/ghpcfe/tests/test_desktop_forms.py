@@ -123,3 +123,25 @@ def test_a_stale_reservation_name_is_cleared_when_unused():
     form.is_valid()
 
     assert form.cleaned_data["desktop_reservation_name"] == ""
+
+
+def test_the_viz_desktop_machine_cascade_ids_match_updateMachineAvailability():
+    """update_form.html's updateMachineAvailability() derives its GPU-field
+    selectors by stripping everything after the last "-" in the machine-type
+    select's own id, and looks up "<prefix>-GPU_type" / "<prefix>-GPU_per_node"
+    from there - the same shape a partition formset row gets for free from
+    Django's own numbered field naming. The desktop fields are not part of any
+    formset, so forms.py gives them that shape explicitly; this pins the
+    contract between the two rather than letting a widget attrs edit silently
+    break the cascade with no visible error (a missing element is simply not
+    found by jQuery, not an exception)."""
+    form = ClusterForm(data={}, initial={})
+
+    machine_type_id = form.fields["desktop_instance_type"].widget.attrs["id"]
+    prefix = machine_type_id.rsplit("-", 1)[0]
+
+    assert form.fields["desktop_gpu_type"].widget.attrs["id"] == f"{prefix}-GPU_type"
+    assert (
+        form.fields["desktop_gpu_count"].widget.attrs["id"]
+        == f"{prefix}-GPU_per_node"
+    )

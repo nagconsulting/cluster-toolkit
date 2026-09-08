@@ -265,17 +265,30 @@ class ClusterForm(forms.ModelForm):
             "desktop_instance_type": forms.Select(
                 # Reuses the same cascade as the controller/login rows and the
                 # partitions table (update_form.html's updateMachineAvailability),
-                # rather than a parallel machine-type control.
-                attrs={"class": "form-control machine_type_select"}
+                # rather than a parallel machine-type control. That cascade
+                # derives its GPU-field ids from the machine-type select's own
+                # id by stripping everything after the last "-", so these three
+                # ids are given the same <prefix>-<field> shape a partition
+                # formset row gets for free from Django - there is only ever
+                # one visualisation desktop, so a literal "-0-" stands in for
+                # the formset index.
+                attrs={
+                    "class": "form-control machine_type_select",
+                    "id": "viz_desktop-0-machine_type",
+                }
             ),
             "viz_desktop_vnc_backend": forms.Select(
                 attrs={"class": "form-control"}
             ),
             "desktop_gpu_type": forms.Select(
-                attrs={"class": "form-control"}
+                attrs={"class": "form-control", "id": "viz_desktop-0-GPU_type"}
             ),
             "desktop_gpu_count": forms.NumberInput(
-                attrs={"class": "form-control", "min": 1}
+                attrs={
+                    "class": "form-control",
+                    "min": 1,
+                    "id": "viz_desktop-0-GPU_per_node",
+                }
             ),
             "desktop_placement_mode": forms.Select(
                 attrs={"class": "form-control"}

@@ -309,7 +309,90 @@
     </table>
     {{ cluster_partitions_formset.management_form }}
   </div>
-  <hr>  
+
+  <hr>
+  <p style="text-decoration: underline; font-size: large;">Remote Desktop</p>
+
+  <div class="form-group">
+    {{ form.enable_web_desktop.errors }}
+    <div class="grid-container">
+      <label class="slider-switch-container">
+        <div class="slider-switch">
+          {{ form.enable_web_desktop }}
+          <span class="slider"></span>
+        </div>
+      </label>
+      <div class="help-text">
+        {{ form.enable_web_desktop.help_text }}
+      </div>
+    </div>
+  </div>
+
+  <div class="form-group">
+    {{ form.enable_viz_desktop.errors }}
+    <div class="grid-container">
+      <label class="slider-switch-container">
+        <div class="slider-switch">
+          {{ form.enable_viz_desktop }}
+          <span class="slider"></span>
+        </div>
+      </label>
+      <div class="help-text">
+        {{ form.enable_viz_desktop.help_text }}
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive" id="viz-desktop-section">
+    <table class="table align-middle">
+      <thead>
+        <tr>
+          <th>Instance Type</th>
+          <th>GPU Type</th>
+          <th># GPUs</th>
+          <th>VNC Backend</th>
+          <th>Partition Mode</th>
+          <th>Placement</th>
+          <th>Reservation Name</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="viz_desktop_row">
+          <td>
+            {{ form.desktop_instance_type.errors.as_ul }}
+            {{ form.desktop_instance_type }}
+          </td>
+          <td>
+            {{ form.desktop_gpu_type.errors.as_ul }}
+            {{ form.desktop_gpu_type }}
+          </td>
+          <td>
+            {{ form.desktop_gpu_count.errors.as_ul }}
+            {{ form.desktop_gpu_count }}
+          </td>
+          <td>
+            {{ form.viz_desktop_vnc_backend.errors.as_ul }}
+            {{ form.viz_desktop_vnc_backend }}
+            <div class="help-text">{{ form.viz_desktop_vnc_backend.help_text }}</div>
+          </td>
+          <td>
+            {{ form.desktop_partition_mode.errors.as_ul }}
+            {{ form.desktop_partition_mode }}
+          </td>
+          <td>
+            {{ form.desktop_placement_mode.errors.as_ul }}
+            {{ form.desktop_placement_mode }}
+          </td>
+          <td>
+            {{ form.desktop_reservation_name.errors.as_ul }}
+            {{ form.desktop_reservation_name }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr>
   <p style="text-decoration: underline; font-size: large;">Additional features</p>
   <div class="form-group">
     {{ form.use_cloudsql.errors }}

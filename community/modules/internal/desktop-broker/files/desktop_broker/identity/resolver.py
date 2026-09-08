@@ -20,17 +20,29 @@ broker changes.
 """
 
 import hmac
+import importlib
 import logging
 
 from ..errors import BrokerError
-from . import iap, jwt, trusted_proxy
 
 LOG = logging.getLogger("ghpc-desktop-broker")
 
+# Mode -> the module implementing it. Backends are imported on first use rather
+# than here, because main.tf installs each mode's dependencies only when that
+# mode is selected: google-auth and cryptography are iap-only. Importing every
+# backend eagerly made a trusted_proxy broker fail at startup on the iap import
+# chain (iap -> jwt -> cryptography), for dependencies it was deliberately never
+# given.
 _RESOLVERS = {
-    "trusted_proxy": trusted_proxy.resolve,
-    "iap": iap.resolve,
+    "trusted_proxy": "trusted_proxy",
+    "iap": "iap",
 }
+
+
+def _backend(mode):
+    """Import the backend module implementing `mode`."""
+    return importlib.import_module(f".{_RESOLVERS[mode]}", __package__)
+
 
 # Headers the broker reads. Named once here so the set is auditable.
 HEADERS = {
@@ -55,7 +67,7 @@ class Resolver:
 
     def __init__(self, config):
         self.config = config
-        self._resolve = _RESOLVERS[config.identity_mode]
+        self._resolve = _backend(config.identity_mode).resolve
         self._key_store = None
         self._audience = None
 
@@ -68,8 +80,12 @@ class Resolver:
             )
 
         if config.identity_mode == "iap":
+            # Imported here for the same reason as the backends above: these
+            # carry the google-auth and cryptography dependencies that only an
+            # iap deployment installs.
+            jwt = importlib.import_module(".jwt", __package__)
             self._key_store = jwt.KeyStore()
-            self._audience = iap.AudienceResolver(config)
+            self._audience = _backend("iap").AudienceResolver(config)
 
     def resolve(self, presented):
         """Verify the shared secret where one is set, then apply the mode.

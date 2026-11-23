@@ -112,7 +112,7 @@ def implied_vars(blueprint, changes, overrides):
     own defaults: gcluster's globals (deployment_name, region, zone, ...)
     with their effective values, vars only the example deployment file sets
     (deployment_defaults) and generated network names (generated_names).
-    builder.html deploymentText shows the same. Only overrides'
+    The page's deploymentText (cluster_builder/core.js) shows the same. Only overrides'
     deployment_name is used (for the generated names)."""
     dropped = set((changes or {}).get("drop_vars") or [])
     variables = describe(blueprint)["variables"]

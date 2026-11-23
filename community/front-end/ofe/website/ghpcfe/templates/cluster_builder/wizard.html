@@ -1,0 +1,72 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+{# Step 1: describe the workload, pick a blueprint (js/views/cluster_builder/wizard.js). #}
+<div id="wizard">
+  <h2>Create a cluster <span class="badge badge-info align-middle">Gemini preview</span></h2>
+  <p class="text-muted">Gemini ranks the Cluster Toolkit blueprints in <code>examples/</code> and <code>community/examples/</code> for your workload. You then configure the one you pick, with Gemini's help; every change is validated with <code>gcluster expand</code>. Nothing is deployed.</p>
+
+  <div class="row">
+    <div class="col-lg-7">
+      <div class="form-group">
+        <label for="intent">Describe your workload</label>
+        <textarea id="intent" class="form-control" rows="4" maxlength="2000"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label>Scheduler</label>
+          <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons" id="sched">
+            <label class="btn btn-outline-secondary active"><input type="radio" name="sched" value="" checked> Let Gemini decide</label>
+            <label class="btn btn-outline-secondary"><input type="radio" name="sched" value="slurm"> Slurm</label>
+            <label class="btn btn-outline-secondary"><input type="radio" name="sched" value="gke"> GKE</label>
+          </div>
+        </div>
+        <div class="form-group col-md-6">
+          <label for="region">Region</label>
+          <select id="region" class="form-control"></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label for="clusterName">Cluster name</label>
+          <input id="clusterName" class="form-control" maxlength="63" placeholder="e.g. md-gromacs">
+          <small class="form-text text-muted">Becomes the blueprint's <code>deployment_name</code>.</small>
+        </div>
+        <div class="form-group col-md-6">
+          <label for="cred">Credential</label>
+          <select id="cred" class="form-control"></select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="network">Network</label>
+        <select id="network" class="form-control"></select>
+        <small class="form-text text-muted">By default the blueprint creates its own network, created and destroyed with the cluster.
+          Choose a subnet of an OFE network to put the cluster on it instead: Gemini swaps the blueprint's network for it and keeps any GPU networks.</small>
+      </div>
+      <button class="btn btn-primary" id="findBtn">Find a starting point</button>
+      <span id="wizBusy" class="text-muted ml-2" style="display:none"><span class="spinner-border spinner-border-sm text-primary mr-1"></span>Gemini is ranking blueprints…</span>
+    </div>
+    <div class="col-lg-5">
+      <label>Examples</label>
+      <div class="list-group" id="examples"></div>
+    </div>
+  </div>
+
+  <div id="cards" class="mt-3"></div>
+  <div id="wizActions" class="mt-3" style="display:none">
+    <button class="btn btn-primary" id="continueBtn">Continue</button>
+    <button class="btn btn-link" onclick="location.reload()">Start over</button>
+  </div>
+</div>

@@ -239,7 +239,8 @@ def generated_names(path):
 
 def generated_value(deployment_name, suffix):
     """A valid GCP name: lowercase letters, digits and hyphens, at most 63
-    characters, not ending in a hyphen. Kept in step with builder.html genName."""
+    characters, not ending in a hyphen. Kept in step with genName in
+    ghpcfe/static/js/views/cluster_builder/modules.js."""
     name = re.sub(r"[^a-z0-9-]", "-", f"{deployment_name}{suffix}".lower())[:MAX_NAME]
     return name.rstrip("-")
 

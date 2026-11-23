@@ -1,0 +1,32 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Cluster Builder (templates/cluster_builder/builder.html): only what Bootstrap 4 lacks. */
+.cb-pre { white-space: pre-wrap; }
+.cb-ap label { cursor: pointer; }
+.cb-ap.border-primary { box-shadow: 0 0 0 1px #007bff; background: #eef5ff; }  /* a selected approach */
+.cb-term { white-space: pre-wrap; word-break: break-all; background: #212529; color: #e9ecef; font-size: 12px; max-height: 240px; overflow: auto; }
+.cb-diff span { display: block; padding: 0 8px; white-space: pre; }
+.cb-diff .a { background: #e6f4ea; color: #0d652d; }
+.cb-diff .d { background: #fce8e6; color: #a50e0e; }
+.cb-chat { max-height: 70vh; overflow-y: auto; }
+.cb-user { background: #e9ecef; border-radius: 12px; }
+.cb-actbar { position: sticky; bottom: 0; z-index: 5; }
+.cb-flash { animation: cbflash 1.6s ease; }
+.cb-mod .form-control { border-color: #007bff; }
+.cb-det { font-size: 12px; }
+.cb-removed { text-decoration: line-through; opacity: .6; }
+@keyframes cbflash { from { background: #d4edda; } to { background: transparent; } }

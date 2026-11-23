@@ -1,0 +1,71 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+{# Step 2: the builder (js/views/cluster_builder/render.js and the rest). #}
+<div id="builder" style="display:none">
+  <div class="d-flex align-items-center flex-wrap mb-2">
+    <h2 class="mb-0 mr-3">Configure cluster</h2>
+    <code id="bpChip" class="mr-2"></code>
+    <span class="badge badge-info">ai_assisted</span>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="row mb-3">
+        <div class="col-sm-6">
+          <div class="card h-100"><div class="card-body py-2">
+            <div class="small text-muted">Estimated compute cost</div>
+            <div id="cost"></div>
+          </div></div>
+        </div>
+        <div class="col-sm-6">
+          <div class="card h-100"><div class="card-body py-2 small" id="definition"></div></div>
+        </div>
+      </div>
+
+      <ul class="nav nav-tabs" id="tabs">
+        <li class="nav-item"><a class="nav-link active" href="#" data-tab="config">Configure</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="yaml">YAML</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="diff">Changes</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="wiring">Wiring</a></li>
+      </ul>
+      <div class="border border-top-0 p-3 bg-white" id="tabBody"></div>
+      <pre class="cb-term p-2 mt-3 rounded" id="term" style="display:none"></pre>
+    </div>
+
+    <div class="col-xl-4">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <strong>Gemini</strong><span class="badge badge-secondary ml-2">Preview</span>
+        </div>
+        <div class="card-body cb-chat" id="chat"></div>
+        <div class="card-footer">
+          <form id="chatForm" class="input-group">
+            <input class="form-control" id="chatIn" maxlength="2000" placeholder="Ask Gemini to change something">
+            <div class="input-group-append"><button class="btn btn-primary" id="chatSend">Send</button></div>
+          </form>
+          <div class="small text-muted mt-1">Proposals are never applied without your approval. Nothing is deployed from this panel.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cb-actbar bg-white border-top py-2 mt-3 d-flex align-items-center flex-wrap">
+    <button class="btn btn-primary mr-2" id="createBtn">Create</button>
+    <button class="btn btn-outline-primary mr-2" id="validateBtn">Validate</button>
+    <button class="btn btn-link" onclick="location.reload()">Start over</button>
+    <span class="small text-muted ml-auto" id="equiv"></span>
+  </div>
+</div>

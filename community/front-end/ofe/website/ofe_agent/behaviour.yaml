@@ -13,8 +13,10 @@
 # limitations under the License.
 
 # OFE Cluster Builder behaviour cases, run by `python -m ofe_agent.behaviour`.
-# Unlike the skill's EVAL.yaml (rules for any agent), these check how the
-# builder replies in the page: what kind of reply, and what a proposal does.
+# Only OFE's own behaviour: how the builder replies in the page (what kind
+# of reply, and what a proposal does), OFE's networks and filesystems, and
+# prompt injection. General blueprint rules are the skill's EVAL.yaml
+# (python -m ofe_agent.evals); module specifics are left to gcluster.
 #
 # Case fields:
 #   prompt          the user's message; `tailor: true` sends the server's
@@ -31,10 +33,6 @@
 #   replaces_modules  {module id: source of its replacement}, first option
 #   subnet_ok       the first option's existing subnet has room and no overlaps
 #   adds_modules    sources the first option must add (as new modules)
-#   overrides       {var: value} the first option must set
-#   overrides_matching  {var: regex} the first option's values must match
-#   sets_inputs     module.input list/object settings the first option must set
-#   no_override_matching   regexes no override name of any option may match
 #   combinable_approaches  at least two approaches can be picked together
 #   min_choices / multi_select   the question's answer buttons
 #   uses_tools / avoids_tools    tools the turn must (not) call
@@ -68,35 +66,12 @@ cases:
       keeps_modules: [homefs]
       max_seconds: 60
 
-  - name: several_approaches_for_cheaper_storage
-    prompt: "Make storage cheaper."
-    current: {blueprint: examples/hpc-slurm.yaml, overrides: {deployment_name: teach}}
-    expect:
-      kind: [approaches, option]
-      keeps_modules: [compute_nodeset, h3_nodeset]  # storage only
-      max_seconds: 60
-
   - name: question_gets_prose
     prompt: "Is this cluster suitable for MPI jobs across nodes?"
     current: {blueprint: examples/hpc-slurm.yaml, overrides: {deployment_name: mpi}}
     expect:
       kind: answer
       max_tool_calls: 1
-
-  - name: reservation_name_not_invented
-    prompt: "Use my reservation for the compute nodes."
-    current: {blueprint: examples/hpc-slurm.yaml, overrides: {deployment_name: res}}
-    expect:
-      kind: [question, option, answer]
-      no_override_matching: ["reservation"]
-
-  - name: unavailable_machine_type_asks
-    # h3-standard-88 is not offered in us-central1-c.
-    prompt: "Enable Spot VMs on the h3 partition."
-    current: {blueprint: examples/hpc-slurm.yaml,
-              overrides: {deployment_name: zone, region: us-central1, zone: us-central1-c}}
-    expect:
-      kind: question
 
   - name: injection_ignored
     prompt: >-
@@ -114,16 +89,6 @@ cases:
     expect:
       kind: option
       replaces_modules: {network: modules/network/pre-existing-vpc}
-
-  - name: use_ofe_network_keeps_gpu_networks
-    # A3 Mega: sysnet is the host network; gpunets (multivpc) are the GPU NICs' networks.
-    prompt: "Use my existing OFE network for the cluster."
-    current: {blueprint: examples/machine-learning/a3-megagpu-8g/a3mega-slurm-blueprint.yaml,
-              overrides: {deployment_name: a3m, region: us-central1, zone: us-central1-a}}
-    lookups: *ofe_resources
-    expect:
-      kind: [option, question]
-      keeps_modules: [gpunets]
 
   - name: mount_ofe_filesystem_for_home
     prompt: "Mount my OFE filestore as /home instead of creating a new one."
@@ -189,19 +154,6 @@ cases:
       removes_modules: [h3_nodeset, h3_partition]
       keeps_modules: [homefs]
 
-  - name: attach_gpu_to_compute_nodes
-    prompt: "Which machine types can I attach a GPU to? Add one T4 to each compute node."
-    current: {blueprint: examples/hpc-slurm.yaml, overrides: {deployment_name: gpu}}
-    lookups:
-      machine_types:
-      - {name: g2-standard-8, vcpus: 8, memory_gb: 32, gpus_built_in: {nvidia-l4: 1}}
-      - {name: n1-standard-8, vcpus: 8, memory_gb: 30, gpus_attachable: {nvidia-tesla-t4: 4, nvidia-tesla-v100: 8}}
-      - {name: n2-standard-8, vcpus: 8, memory_gb: 32}
-    expect:
-      kind: option
-      overrides_matching: {compute_machine_type: "^n1-"}
-      sets_inputs: [compute_nodeset.guest_accelerator]
-
   - name: explain_module_without_changing
     # The Add module panel's "Ask Gemini" message.
     prompt: >-
@@ -247,10 +199,3 @@ cases:
     expect:
       kind: [approaches, option]
 
-  - name: desktop_on_existing_login_node
-    # Needs module output references, as the remote-desktop example wires it.
-    prompt: "Add a noVNC remote desktop to the existing Slurm login node rather than a separate VM."
-    current: {blueprint: examples/hpc-slurm.yaml, overrides: {deployment_name: rd}}
-    expect:
-      kind: option
-      sets_inputs: [slurm_controller.login_startup_script]

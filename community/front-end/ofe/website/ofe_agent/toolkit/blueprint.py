@@ -22,7 +22,7 @@ import yaml
 
 from . import catalog
 from .errors import ToolError
-from .gcluster import MODULE_RE, describe, module_explain
+from .gcluster import MODULE_RE, describe, module_explain, module_paths
 from .paths import REPO_ROOT
 from .values import VAR_REF_ANY_RE, VAR_REF_RE
 from .stages import image, stages
@@ -141,7 +141,9 @@ def unwired_inputs(path):
     return out
 
 
-EXISTING_NETWORK = "modules/network/pre-existing-vpc"
+# Cluster Toolkit names modules that use an existing resource, rather than
+# create one, pre-existing-<kind> (pre-existing-vpc, -network-storage, ...).
+EXISTING_PREFIX = "pre-existing-"
 MAX_NAME = 63  # GCP resource names
 
 
@@ -149,11 +151,66 @@ def _outputs(source):
     return [o if isinstance(o, str) else o.get("name", "") for o in (module_explain(source) or {}).get("outputs") or []]
 
 
+def _inputs(source):
+    ex = module_explain(source) or {}
+    return (ex.get("required_inputs") or []) + (ex.get("optional_inputs") or [])
+
+
+def _consumed_inputs(source):
+    """Names of every input of the module, including those explain lists as
+    filled from `use:` (auto_injected_inputs) rather than among its inputs."""
+    ex = module_explain(source) or {}
+    return {i["name"] for i in _inputs(source)} | {
+        n for a in ex.get("auto_injected_inputs") or [] if "use" in a.get("source", "") for n in a.get("inputs") or []}
+
+
+def _recommended_use(source):
+    """catalog.yaml module_wiring: the modules that can fill this module's
+    use: inputs, pre-existing-* alternatives included."""
+    return set((catalog.catalog_doc().get("module_wiring", {}).get(source) or {}).get("recommended_use") or [])
+
+
+def uses_existing(source):
+    """Whether the module uses an existing resource instead of creating one."""
+    return source.rsplit("/", 1)[-1].startswith(EXISTING_PREFIX)
+
+
 def creates_network(source):
     """Whether the module creates networks: `gcluster explain` shows it
-    provides them (a network_self_link(s) output) and it is not the
-    existing-network module, which only looks one up."""
-    return source != EXISTING_NETWORK and bool({"network_self_link", "network_self_links"} & set(_outputs(source)))
+    provides them (a network_self_link(s) output) and it does not just look
+    up an existing one."""
+    return not uses_existing(source) and bool({"network_self_link", "network_self_links"} & set(_outputs(source)))
+
+
+def replacements(path, module_id):
+    """Modules that can stand in for one of the blueprint's modules by using
+    an existing resource instead of creating one (pre-existing-* modules).
+    Where the module fills a user's use: inputs, the user's recommended_use
+    in catalog.yaml says what else can (e.g. pre-existing-vpc for vpc);
+    otherwise a replacement must provide the outputs the users take (gcluster
+    wires a used module's outputs to inputs of the same name). outputs_missing
+    lists outputs users take that a replacement lacks (those inputs then keep
+    their defaults). Nothing about particular modules is known here."""
+    catalog.check_blueprint(path)
+    mods = template(path)
+    if module_id not in mods:
+        raise ToolError(f"{module_id!r} is not a module of {path}")
+    source = mods[module_id][0]
+    use = {m["id"]: m.get("use", []) for m in catalog.blueprints()[path].get("modules", [])}
+    used_by = [mid for mid in mods if module_id in use.get(mid, [])]
+    taken = set(_outputs(source)) & {n for mid in used_by for n in _consumed_inputs(mods[mid][0])}
+    recommended = [_recommended_use(mods[mid][0]) for mid in used_by if source in _recommended_use(mods[mid][0])]
+    found = []
+    for cand in module_paths():
+        if cand == source or not uses_existing(cand):
+            continue
+        have = set(_outputs(cand))
+        if all(cand in r for r in recommended) if recommended else (taken and taken <= have):
+            ex = module_explain(cand) or {}
+            found.append({"source": cand, "required_inputs": [i["name"] for i in ex.get("required_inputs") or []],
+                          "outputs_missing": sorted(taken - have)})
+    return {"module": module_id, "source": source, "used_by": used_by, "outputs_taken": sorted(taken),
+            "replacements": found}
 
 
 @functools.cache
@@ -189,8 +246,7 @@ def generated_value(deployment_name, suffix):
 
 def blueprint_data(path):
     """Everything the Cluster Builder form needs for one catalog blueprint:
-    declared vars, hints from its vars: comments and companion deployment
-    file, the template as shown (without vars:) and as downloaded (see
+    declared vars, the template as shown (without vars:) and as downloaded (see
     view.py), each module's settings and, for local modules, their inputs
     with validations from `gcluster explain`."""
     catalog.check_blueprint(path)
@@ -207,7 +263,6 @@ def blueprint_data(path):
         "uses": var_uses(path),
         "unwired": unwired_inputs(path),
         "generated": generated_names(path),
-        "hints": catalog.blueprint_hints(path),
         "template_view": view_text(text),
         "template_clean": clean_text(text),
         "modules": [{"id": i, "source": src, "use": use.get(i, [])} for i, (src, _) in modules.items()],
@@ -232,13 +287,12 @@ def _short(value, limit=120):
 @functools.cache
 def summary(path):
     """A blueprint as the agent needs it, given up front so it rarely has to
-    call describe: each var with what it feeds (module.input path) and any
-    note from the blueprint's or its example deployment file's comments;
-    each module's source, use and settings (long strings cut); its
+    call describe: each var with what it feeds (module.input path); each
+    module's source, use and settings (long strings cut); its
     deployment groups by role and the custom image it builds, if any
     (stages.py)."""
     catalog.check_blueprint(path)
-    uses, hints, generated = var_uses(path), catalog.blueprint_hints(path), generated_names(path)
+    uses, generated = var_uses(path), generated_names(path)
     variables = []
     for v in describe(path)["variables"]:
         entry = {k: v[k] for k in ("name", "type", "default", "required", "global") if v.get(k)}
@@ -247,8 +301,6 @@ def summary(path):
             entry["generated"] = f"OFE sets it to <deployment_name>{generated[v['name']]}; do not ask for it"
         if uses.get(v["name"]):
             entry["feeds"] = [f"{u['module']}.{u['path']}" for u in uses[v["name"]]]
-        if hints.get(v["name"], {}).get("comment"):
-            entry["note"] = hints[v["name"]]["comment"]
         variables.append(entry)
     use = {m["id"]: m.get("use", []) for m in catalog.blueprints()[path].get("modules", [])}
     img = image(path)

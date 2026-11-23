@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Cluster Builder's blueprint views (ofe_agent.toolkit.view) and the
-notes kept from a blueprint's vars: comments (catalog.vars_hints).
+"""The Cluster Builder's blueprint views (ofe_agent.toolkit.view).
 
-The page shows a blueprint without its vars: and lists the defaults and
-their notes separately; the download keeps every default but not the
+The page shows a blueprint without its vars: and lists the defaults
+separately; the download keeps every default but not the
 example's comments. Neither may change what the blueprint means.
 """
 
@@ -24,7 +23,7 @@ import unittest
 
 import yaml
 
-from ofe_agent.toolkit import catalog, view
+from ofe_agent.toolkit import view
 
 BLUEPRINT = """\
 # Copyright 2026 Google LLC
@@ -87,15 +86,6 @@ class CleanTextTests(unittest.TestCase):
     def test_ai_assisted_not_repeated(self):
         once = view.clean_text(BLUEPRINT)
         self.assertEqual(view.clean_text(once).count("ai_assisted"), 1)
-
-
-class VarsHintsTests(unittest.TestCase):
-    def test_notes_from_comments(self):
-        hints = catalog.vars_hints(BLUEPRINT)
-        self.assertEqual(hints["reservation_name"]["notes"],
-                         ["Provisioning (pick only one)", "supply reservation name"])
-        self.assertEqual(hints["enable_spot"]["comment"], "")
-        self.assertEqual(hints["deployment_name"]["example"], "demo")
 
 
 if __name__ == "__main__":

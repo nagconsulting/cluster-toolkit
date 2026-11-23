@@ -320,9 +320,9 @@ function deploymentVars() {
 const deploymentText = () => depYaml(deploymentVars());
 // The YAML tab's Defaults view: the blueprint's vars: as a table, since the
 // blueprint view leaves them out. Each default, what kind of var it is,
-// whether deployment.yaml replaces it, and the template's notes on it.
+// and whether deployment.yaml replaces it.
 function defaultsHtml() {
-  const bd = BD[S.bp] || {}, dep = deploymentVars(), hints = bd.hints || {};
+  const bd = BD[S.bp] || {}, dep = deploymentVars();
   // Vars only the image build uses (modules in image or image-support groups).
   const imageMods = new Set((bd.stages || []).filter(g => g.role !== "cluster").flatMap(g => g.modules));
   const imageOnly = v => { const u = (bd.uses || {})[v.name] || []; return u.length && u.every(x => imageMods.has(x.module)); };
@@ -335,11 +335,10 @@ function defaultsHtml() {
     : `<code>${esc(showDefault(v))}</code>`;
   const rows = vars(S.bp).filter(v => v.name !== "project_id").map(v => {
     const set = v.name in dep ? `<code>${esc(fmt(dep[v.name]))}</code>` : '<span class="text-muted">default</span>';
-    const note = (hints[v.name] || {}).comment || "";
-    return `<tr><td><code>${esc(v.name)}</code> ${kind(v)}</td><td>${value(v)}</td><td>${set}</td><td class="text-muted">${esc(note)}</td></tr>`;
+    return `<tr><td><code>${esc(v.name)}</code> ${kind(v)}</td><td>${value(v)}</td><td>${set}</td></tr>`;
   });
   return `<div class="table-responsive" style="max-height:60vh"><table class="table table-sm small mb-0">
-    <thead><tr><th>Variable</th><th>Default</th><th>deployment.yaml</th><th>Notes</th></tr></thead>
+    <thead><tr><th>Variable</th><th>Default</th><th>deployment.yaml</th></tr></thead>
     <tbody>${rows.join("")}</tbody></table></div>`;
 }
 function download(name, text) {
@@ -742,7 +741,8 @@ function varField(v) {
   if (v.global && v.name === "region" && vars(S.bp).some(x => x.name === "zone" && x.global))
     return `<div class="form-group"><label>Region</label><input class="form-control" value="${esc(current(S.bp, S.overrides, v) ?? "")}" disabled><small class="form-text text-muted">Derived from the zone.</small></div>`;
   const c = varConstraints(v.name), w = wiring()[v.name] || [];
-  const hint = (BD[S.bp].hints || {})[v.name] || {};
+  // What the var is for: the description of the first module input it feeds (gcluster explain).
+  const about = (w.map(x => inputMeta(x.source, x.input)).find(i => i && i.description) || {}).description || "";
   const expr = v.type === "expression";
   const required = isRequiredVar(v), generated = genSuffix(v.name) !== undefined;
   // Named after where the blueprint uses it, e.g. subnetworks[0].subnet_name -> "Subnet name".
@@ -763,18 +763,18 @@ function varField(v) {
   return field({
     id: "v-" + v.name, label: fieldLabel, type: v.type, value: current(S.bp, S.overrides, v), suggest, name: v.name,
     def: expr ? exprDisplay(v.default) : v.default,
-    placeholder: expr ? exprDisplay(v.default) : generated ? genName(v.name) : (hint.example ? `e.g. ${hint.example}` : showDefault(v)),
+    placeholder: expr ? exprDisplay(v.default) : generated ? genName(v.name) : showDefault(v),
     c, required, changed: v.name in S.overrides || !!v.promoted,
     hint: expr ? `Derived from other variables by default; leave empty to keep ${exprDisplay(v.default)}.`
       : generated && !(v.name in S.overrides) ? `Named from the cluster name: ${genName(v.name)}. Type a name to use your own.`
-      : (required ? hint.comment : ""),
+      : (required ? about : ""),
     usedIn: embedded.map(u => `${u.module}.${u.path}`),
     offer: offer + S.changes.promoted.filter(p => p.link && p.var === v.name).map(p =>
       `<small class="form-text text-muted">Also passed to <code>${esc(p.module)}.${esc(p.input)}</code>.
         <a href="#" data-unlink="${esc(p.module)}|${esc(p.input)}">Stop passing it</a></small>`).join(""),
     attrs: `data-n="${esc(v.name)}" data-t="${expr ? "string" : esc(v.type)}"`,
     details: detailsHtml({name: v.name, type: v.type, def: expr ? exprDisplay(v.default) : v.default, c,
-      description: !required && hint.comment ? `From the example deployment file: ${hint.comment}` : "",
+      description: required ? "" : about,
       setBy: v.promoted ? `added from <code>${esc(v.promoted.module)}.${esc(v.promoted.input)}</code>` : v.global ? "gcluster global variable" : "blueprint variable",
       sets: usesOf(v.name).map(u => `<code>${esc(u.module)}.${esc(u.path)}</code>`).join(", "),
       extra: v.promoted ? `<div><a href="#" data-rm="${esc(v.name)}">Remove this added input</a></div>` : ""}),
@@ -805,7 +805,6 @@ function moduleField(id, inp) {
   const v = st.var ? vars(S.bp).find(x => x.name === st.var) : null;
   const value = v ? current(S.bp, S.overrides, v) : (st.kind === "literal" || st.kind === "own") ? st.value : (st.own ? "" : parseDefault(inp));
   const varGroup = st.var && groupOfVar(st.var);
-  const hint = v ? ((BD[S.bp].hints || {})[v.name] || {}) : {};
   const setBy = {
     own: "set in this added module",
     var: varGroup === "mod:" + id ? `set through blueprint variable <code>${esc(st.var)}</code> in <code>deployment.yaml</code>`
@@ -818,7 +817,7 @@ function moduleField(id, inp) {
     id: `m-${id}-${inp.name}`, label: label(inp.name), type: inp.type, value, def: showDefault(inp), c, required,
     changed: (v && v.name in S.overrides) || st.kind === "added" || st.kind === "own",
     // A var-backed input takes its value from the blueprint var, so the module default would mislead.
-    hint: required ? hint.comment : "", placeholder: hint.example ? `e.g. ${hint.example}` : v ? "" : undefined,
+    placeholder: v ? "" : undefined,
     attrs: `data-mod="${esc(id)}" data-input="${esc(inp.name)}" data-t="${esc(inp.type)}"`,
     details: detailsHtml({name: inp.name, type: inp.type, def: inp.default, description: inp.description, setBy, c,
       extra: (st.own || st.kind === "unset" && addedMod(id)) && inp.type === "string" ? "<div>Type <code>$name</code> to use a variable, e.g. <code>$deployment_name-scratch</code>.</div>" : ""}),
@@ -1005,7 +1004,7 @@ function renderBuilder() {
       <div class="col-md-8">${cur ? `<h5>${esc(cur[1])}</h5>
         ${group === "added" ? `<div class="alert alert-info small">These inputs aren't exposed by <code>${esc(S.bp)}</code>, so the cluster uses a copy, <code>${esc(copyName(S.bp))}</code> (<code>ai_assisted: true</code>). Each one is a variable whose default is the module default (or the value the template hardcoded); your value goes in <code>deployment.yaml</code>.</div>` : ""}
         ${cur[2].map(v => varField(v)).join("")}
-        <small class="text-muted">Fields generated from <code>gcluster explain ${esc(S.bp)} -f json</code>; hints from its <code>vars:</code> comments and example deployment file.</small>`
+        <small class="text-muted">Fields generated from <code>gcluster explain ${esc(S.bp)} -f json</code>.</small>`
         : group === "add" ? addModuleHtml() : moduleHtml(group.slice(4))}</div></div>`;
     wireConfigure(body);
     S._flash = null;

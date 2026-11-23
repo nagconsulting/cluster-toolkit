@@ -26,7 +26,7 @@ from google.genai import types
 from . import gemini
 from .prompts import CHAT_INSTRUCTION, skill_rules
 from .toolkit import capacity, catalog
-from .toolkit.blueprint import input_info, module_docs, summary, template
+from .toolkit.blueprint import creates_network, input_info, module_docs, replacements, summary, template, uses_existing
 from .toolkit.changes import check_changes
 from .toolkit.deployment import build_deployment, configured_blueprint, validate
 from .toolkit.errors import ToolError
@@ -147,6 +147,15 @@ class _Session:
             add it."""
             return self._call("read_module_docs", lambda: {"module": path, "readme": module_docs(path)}, path=path)
 
+        def find_replacements(blueprint: str, module_id: str) -> dict:
+            """Modules that can stand in for one of the blueprint's modules
+            by using an existing resource (a network, filesystem, ...)
+            instead of creating one, with their required inputs and any
+            outputs the module's users take that they lack. Use it to put
+            the cluster on something that already exists."""
+            return self._call("find_replacements", lambda: replacements(blueprint, module_id),
+                              blueprint=blueprint, module_id=module_id)
+
         def list_modules() -> list:
             """List modules from the catalog's module_wiring with their
             required_inputs, recommended_use and consumed_by."""
@@ -164,8 +173,7 @@ class _Session:
             existing modules the template does not expose as vars; leave
             out "value" when only the user knows it (e.g. their reservation
             name) and the page asks them for it as a required field. A list
-            or object value (e.g. guest_accelerator: [{"type":
-            "nvidia-tesla-t4", "count": 1}]) is set on the module as is,
+            or object value is set on the module as is,
             checked against the input's type from describe; so is a
             reference to another module's output ("$(<module>.<output>)") or
             concat/flatten/merge over such references and vars (e.g.
@@ -246,15 +254,15 @@ class _Session:
                     if any(lost.values()):
                         out["replaced_settings_not_carried_over"] = {k: v for k, v in lost.items() if v}
                     # A network replaced by an existing one: its firewall rules are that network's.
-                    if any(a["id"] in normalised["remove_modules"] and a["source"].startswith("modules/network/")
-                           for a in normalised["add_modules"]):
+                    if any(a["id"] in normalised["remove_modules"] and uses_existing(a["source"])
+                           and creates_network(template(blueprint)[a["id"]][0]) for a in normalised["add_modules"]):
                         out.setdefault("next_step", (
-                            "The cluster now uses an existing network, so only that network's firewall"
-                            " rules apply" + (" (list_firewall_rules shows them)" if "firewall_rules" in self.lookups
-                                              else "") + ". If its services need traffic those rules do not"
-                            " allow (e.g. Managed Lustre: tcp 988 from the private service access range;"
-                            " internal traffic; IAP SSH), add modules/network/firewall-rules with use:"
-                            " [<network id>] and those rules, named $(vars.deployment_name)-<purpose>."))
+                            "The cluster now uses an existing network, so the replaced module's firewall rules"
+                            " are not created and only that network's own apply"
+                            + (" (list_firewall_rules shows them)" if "firewall_rules" in self.lookups else "")
+                            + ". If the cluster's modules need traffic those rules do not allow (their READMEs"
+                            " say what), add a module that creates firewall rules (list_modules) using the"
+                            " network, with rules named $(vars.deployment_name)-<purpose>."))
                 if _LOCATION_FAILURE_RE.search(validation["output"]):
                     out["next_step"] = (
                         "A zone or machine type check failed. Do not guess another zone or"
@@ -289,8 +297,8 @@ class _Session:
 
         def offer_option(proposal_id: str, title: str, reason: str) -> dict:
             """Offer a proposal from this turn to the user as one option they
-            can accept. title: a few words naming the approach (e.g. "Shrink
-            the Filestore"); reason: one sentence on the trade-off. Offer up
+            can accept. title: a few words naming the approach (e.g. "Smaller
+            shared storage"); reason: one sentence on the trade-off. Offer up
             to three distinct approaches; best first."""
 
             def run():
@@ -310,11 +318,11 @@ class _Session:
         def offer_approach(title: str, description: str, exclusive_group: str) -> dict:
             """Describe one way to meet the request, without building it.
             The user ticks the ones they want and the next turn builds those
-            together. title: a few words (e.g. "Replace with a VM-based NFS
+            together. title: a few words (e.g. "Self-managed storage
             server"); description: one sentence on what changes and the
             trade-off. exclusive_group: the same short word for approaches
             that replace each other, so only one can be picked (e.g.
-            "storage" for a smaller Filestore vs an NFS server); "" for one
+            "storage" for two alternative kinds of storage); "" for one
             that combines with any other (e.g. fewer nodes). Up to five;
             best first."""
 
@@ -347,7 +355,7 @@ class _Session:
             """Machine types the user's project can use in a zone, with
             vCPUs, memory and GPUs: gpus_built_in come with the machine type
             (e.g. a2, a3, g2); gpus_attachable can be added to it, up to the
-            count given, with the compute module's guest_accelerator setting.
+            count given, through the compute module's accelerator input.
             prefix filters by name, e.g. "n1-" or "a3-"; "" lists all
             (truncated). Use it for any question about GPUs."""
 
@@ -372,14 +380,14 @@ class _Session:
 
         def list_networks() -> dict:
             """Networks (VPCs) OFE manages or has imported for the user's
-            credential, with their subnets and regions, ready to use with
-            modules/network/pre-existing-vpc."""
+            credential, with their subnets and regions (find_replacements
+            gives the module to use one with)."""
             return self._call("list_networks", lambda: {"networks": self.lookups["networks"]()})
 
         def list_filesystems() -> dict:
             """Filesystems OFE manages or has imported for the user's
-            credential (server, exports, type, network), ready to mount with
-            modules/file-system/pre-existing-network-storage."""
+            credential (server, exports, type, network); find_replacements
+            gives the module to mount one with."""
             return self._call("list_filesystems", lambda: {"filesystems": self.lookups["filesystems"]()})
 
         def list_firewall_rules(network_name: str) -> dict:
@@ -406,7 +414,7 @@ class _Session:
             return self._call("machine_prices", run, zone=zone, machine_types=machine_types)
 
         tools = [
-            list_blueprints, find_blueprints, describe, read_module_docs, list_modules,
+            list_blueprints, find_blueprints, describe, read_module_docs, list_modules, find_replacements,
             propose_deployment, offer_option, offer_approach, ask_user,
         ]
         # Lookups the caller (OFE) provides with the user's credential.

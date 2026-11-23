@@ -19,7 +19,6 @@
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -62,17 +61,6 @@ def check(expect, result):
         cap = offered[0]["validation"].get("capacity")
         if expect.get("subnet_ok") and cap and not cap["ok"]:
             fails.append(f"existing subnet: fits={cap.get('fits')}, overlaps={cap.get('overlaps')}")
-        set_vars = offered[0]["deployment"]["vars"]
-        fails += [f"{k} is {set_vars.get(k)!r}, expected {v!r}"
-                  for k, v in (expect.get("overrides") or {}).items() if set_vars.get(k) != v]
-        fails += [f"{k} is {set_vars.get(k)!r}, expected to match {rx!r}"
-                  for k, rx in (expect.get("overrides_matching") or {}).items()
-                  if not re.search(rx, str(set_vars.get(k, "")))]
-        set_on = {f"{x['module']}.{x['input']}" for x in offered[0]["changes"].get("settings") or []}
-        fails += [f"did not set {x}" for x in expect.get("sets_inputs", []) if x not in set_on]
-    for pattern in expect.get("no_override_matching", []):
-        for p in offered:
-            fails += [f"override {k!r} matches {pattern!r}" for k in p["deployment"]["vars"] if re.search(pattern, k)]
     if len(result.choices) < expect.get("min_choices", 0):
         fails.append(f"{len(result.choices)} choices offered, expected at least {expect['min_choices']}")
     if "multi_select" in expect and result.multi_select != expect["multi_select"]:

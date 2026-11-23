@@ -32,7 +32,7 @@ import re
 
 import yaml
 
-from .blueprint import EXISTING_NETWORK, creates_network
+from .blueprint import creates_network, uses_existing
 from .gcluster import module_explain
 from .values import default_value
 
@@ -108,12 +108,12 @@ def vm_demand(expanded):
 
 def existing_subnet(expanded):
     """(region, subnetwork name) when the configuration uses an existing
-    subnet through modules/network/pre-existing-vpc, else None."""
+    subnet through a pre-existing-* network module, else None."""
     doc = yaml.safe_load(expanded)
     value = _resolver(doc)
     for m in _modules(doc):
         s = m.get("settings") or {}
-        if m.get("source") == EXISTING_NETWORK and s.get("subnetwork_name"):
+        if uses_existing(m.get("source", "")) and s.get("subnetwork_name"):
             region = value(s.get("region")) or (doc.get("vars") or {}).get("region")
             return region, value(s["subnetwork_name"])
     return None

@@ -71,7 +71,7 @@ def describe(path):
         return explain_json(path)
     if MODULE_RE.match(path) and (REPO_ROOT / path).is_dir():
         return _with_deprecated_inputs(explain_json(path))
-    close = difflib.get_close_matches(path, list(catalog.blueprints()) + _module_paths(), n=3, cutoff=0.5)
+    close = difflib.get_close_matches(path, list(catalog.blueprints()) + module_paths(), n=3, cutoff=0.5)
     raise ToolError(
         f"{path!r} is neither a catalog blueprint nor a module under"
         " modules/ or community/modules/"
@@ -92,7 +92,7 @@ def _with_deprecated_inputs(ex):
 
 
 @functools.cache
-def _module_paths():
+def module_paths():
     """Every local module (a directory with metadata.yaml) under modules/ and community/modules/."""
     return sorted(str(m.parent.relative_to(REPO_ROOT)) for top in ("modules", "community/modules")
                   for m in (REPO_ROOT / top).rglob("metadata.yaml"))

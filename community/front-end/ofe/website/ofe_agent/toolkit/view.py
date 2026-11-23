@@ -15,8 +15,8 @@
 """A blueprint as the Cluster Builder shows and downloads it.
 
 The page shows the blueprint without its vars: block (view_text): values
-live in deployment.yaml, and the template's defaults and their comments are
-listed separately (catalog.blueprint_hints, the page's Defaults view). The
+live in deployment.yaml, and the template's defaults are listed separately
+(the page's Defaults view). The
 download (clean_text) keeps vars: with every default, so it still works with
 deployment.yaml alone, but without the example's comments, and is marked
 ai_assisted."""

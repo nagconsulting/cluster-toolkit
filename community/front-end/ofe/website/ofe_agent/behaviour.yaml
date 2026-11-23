@@ -32,7 +32,6 @@
 #   removes_modules / keeps_modules   module ids, checked on the first option
 #   replaces_modules  {module id: source of its replacement}, first option
 #   subnet_ok       the first option's existing subnet has room and no overlaps
-#   adds_modules    sources the first option must add (as new modules)
 #   combinable_approaches  at least two approaches can be picked together
 #   min_choices / multi_select   the question's answer buttons
 #   uses_tools / avoids_tools    tools the turn must (not) call
@@ -101,9 +100,9 @@ cases:
       kind: option
       replaces_modules: {homefs: modules/file-system/pre-existing-network-storage}
 
-  - name: lustre_on_ofe_network_adds_firewall_rule
-    # The fixture network's rules (ofe_resources) allow internal and IAP SSH
-    # traffic only; Managed Lustre also needs tcp 988 from its service range.
+  - name: lustre_on_ofe_network
+    # Private service access stays with the cluster; firewall rules are only
+    # what the modules' READMEs ask for (none for single-NIC Managed Lustre).
     prompt: "Use my existing OFE network for this cluster."
     current: {blueprint: examples/pfs-managed-lustre-slurm.yaml,
               overrides: {deployment_name: lus, region: us-central1, zone: us-central1-a}}
@@ -111,7 +110,7 @@ cases:
     expect:
       kind: option
       replaces_modules: {network: modules/network/pre-existing-vpc}
-      adds_modules: [modules/network/firewall-rules]
+      keeps_modules: [private_service_access, lustre-gcp]
 
   - name: tailor_onto_existing_network
     tailor: true

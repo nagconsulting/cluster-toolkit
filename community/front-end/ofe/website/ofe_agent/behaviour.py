@@ -56,8 +56,6 @@ def check(expect, result):
         fails += [f"removed {m}" for m in expect.get("keeps_modules", []) if m in removed]
         fails += [f"did not replace {m} with {src}" for m, src in (expect.get("replaces_modules") or {}).items()
                   if not (m in removed and added.get(m) == src)]
-        fails += [f"did not add a {src} module" for src in expect.get("adds_modules", [])
-                  if not any(s == src and m not in removed for m, s in added.items())]
         cap = offered[0]["validation"].get("capacity")
         if expect.get("subnet_ok") and cap and not cap["ok"]:
             fails.append(f"existing subnet: fits={cap.get('fits')}, overlaps={cap.get('overlaps')}")

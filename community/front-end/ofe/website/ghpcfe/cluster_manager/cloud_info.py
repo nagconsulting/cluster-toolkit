@@ -426,6 +426,72 @@ def get_subnets(cloud_provider, credentials):
         raise Exception("Unsupported Cloud Provider")
 
 
+def get_subnet_usage(cloud_provider, credentials):
+    """IPv4 addresses taken in each subnet's primary range: one per VM
+    network interface plus reserved (unattached) internal addresses.
+    {(region, subnet name): count}."""
+    if cloud_provider != "GCP":
+        raise Exception("Unsupported Cloud Provider")
+    (project, client) = _get_gcp_client(credentials)
+    used = {}
+
+    def count(subnetwork_url):
+        # .../projects/<p>/regions/<region>/subnetworks/<name>
+        tokens = subnetwork_url.split("/")
+        key = (tokens[-3], tokens[-1])
+        used[key] = used.get(key, 0) + 1
+
+    def each(collection, kind):
+        req = collection().aggregatedList(project=project)
+        while req is not None:
+            resp = req.execute()
+            for scope in resp.get("items", {}).values():
+                yield from scope.get(kind, [])
+            req = collection().aggregatedList_next(previous_request=req, previous_response=resp)
+
+    for instance in each(client.instances, "instances"):
+        for nic in instance.get("networkInterfaces", []):
+            if nic.get("subnetwork"):
+                count(nic["subnetwork"])
+    for address in each(client.addresses, "addresses"):
+        if (address.get("addressType") == "INTERNAL" and address.get("status") == "RESERVED"
+                and address.get("subnetwork")):
+            count(address["subnetwork"])
+    return used
+
+
+def get_firewall_rules(cloud_provider, credentials, network_name):
+    """VPC firewall rules attached to a network, whoever created them,
+    simplified: [{name, direction, priority, action ("allow"/"deny"),
+    rules (e.g. "tcp:22"), source_ranges, destination_ranges, target_tags,
+    disabled}]."""
+    if cloud_provider != "GCP":
+        raise Exception("Unsupported Cloud Provider")
+    (project, client) = _get_gcp_client(credentials)
+    items = []
+    req = client.firewalls().list(project=project)
+    while req is not None:
+        resp = req.execute()
+        items.extend(resp.get("items", []))
+        req = client.firewalls().list_next(previous_request=req, previous_response=resp)
+
+    def rules(entries):
+        return [f"{e['IPProtocol']}:{','.join(e['ports'])}" if e.get("ports") else e["IPProtocol"]
+                for e in entries]
+
+    return sorted(
+        ({"name": fw["name"], "direction": fw.get("direction", "INGRESS"),
+          "priority": fw.get("priority", 1000),
+          "action": "deny" if fw.get("denied") else "allow",
+          "rules": rules(fw.get("denied") or fw.get("allowed") or []),
+          "source_ranges": fw.get("sourceRanges", []),
+          "destination_ranges": fw.get("destinationRanges", []),
+          "target_tags": fw.get("targetTags", []),
+          "disabled": fw.get("disabled", False)}
+         for fw in items if fw.get("network", "").rsplit("/", 1)[-1] == network_name),
+        key=lambda r: (r["direction"], r["priority"], r["name"]))
+
+
 def _get_gcp_subnet_egress_info(credentials, region, subnet_name):
     """Report how a GCP subnet can reach Google APIs / the internet.
 

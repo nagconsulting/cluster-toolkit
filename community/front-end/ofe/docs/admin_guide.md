@@ -394,6 +394,19 @@ A typical workflow for creating a new cluster is as follows:
 1. Finally, save the configurations and click the *Create* button to trigger
    the cluster creation.
 
+### Cluster Builder
+
+*Cluster Builder*, next to *Add cluster* on the *Clusters* page, configures any
+Cluster Toolkit example blueprint with the help of a Gemini agent (Vertex AI,
+in the server's project; the server's service account needs the Vertex AI User
+role). Describe the workload; the builder ranks matching examples, then
+proposes changes you review as a diff before they are applied. Values are
+checked against the limits `gcluster explain` reports for each module input,
+and the whole configuration with `gcluster expand`. The result is a blueprint
+and `deployment.yaml` to download and deploy with `gcluster`; blueprints that
+build a custom image first are flagged when you choose them. The model can be
+changed with the `OFE_AGENT_MODEL` environment variable.
+
 ### Deleting a cluster
 
 To destroy a cluster, first find the list of clusters in the *Clusters* menu,

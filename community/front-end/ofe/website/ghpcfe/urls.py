@@ -30,6 +30,7 @@ from .views.registries import *
 from .views.containers import *
 from .views.workbench import *
 from .views.users import *
+from .views import cluster_builder
 from .views.vpc import *
 from .views.filesystems import *
 from .views.gcpfilestore import *
@@ -47,6 +48,17 @@ urlpatterns = [
     ),
     path("credentials/", CredentialListView.as_view(), name="credentials"),
     path("clusters/", ClusterListView.as_view(), name="clusters"),
+    path("cluster-builder/", cluster_builder.ClusterBuilderView.as_view(), name="cluster-builder"),
+    path("cluster-builder/api/rank/", cluster_builder.RankView.as_view(), name="cluster-builder-rank"),
+    path("cluster-builder/api/chat/", cluster_builder.ChatView.as_view(), name="cluster-builder-chat"),
+    path("cluster-builder/api/preview/", cluster_builder.PreviewView.as_view(), name="cluster-builder-preview"),
+    path("cluster-builder/api/module/", cluster_builder.ModuleView.as_view(), name="cluster-builder-module"),
+    path("cluster-builder/api/modules/", cluster_builder.ModulesView.as_view(), name="cluster-builder-modules"),
+    path("cluster-builder/api/reset/", cluster_builder.ResetView.as_view(), name="cluster-builder-reset"),
+    path("cluster-builder/api/blueprint/", cluster_builder.BlueprintView.as_view(), name="cluster-builder-blueprint"),
+    path("cluster-builder/api/validate/", cluster_builder.ValidateView.as_view(), name="cluster-builder-validate"),
+    path("cluster-builder/api/cost/", cluster_builder.CostView.as_view(), name="cluster-builder-cost"),
+    path("cluster-builder/api/zones/", cluster_builder.ZonesView.as_view(), name="cluster-builder-zones"),
     path("vpc/", VPCListView.as_view(), name="vpcs"),
     path("applications/", ApplicationListView.as_view(), name="applications"),
     path("jobs/", JobListView.as_view(), name="jobs"),

@@ -30,7 +30,8 @@ locals {
     "cloudtrace.agent",
     "pubsub.admin",
     "artifactregistry.admin",
-    "secretmanager.admin"
+    "secretmanager.admin",
+    "aiplatform.user"
   ]
 
   deploy_key1 = var.deployment_key != "" ? filebase64(var.deployment_key) : ""
@@ -181,7 +182,10 @@ resource "google_compute_instance" "server_vm" {
       "trace",
       "service-control",
       "service-management",
-      "pubsub"
+      "pubsub",
+      # Vertex AI (Cluster Builder's Gemini agent) has no narrower scope;
+      # access is still limited by the service account's IAM roles.
+      "cloud-platform"
     ]
   }
   scheduling {

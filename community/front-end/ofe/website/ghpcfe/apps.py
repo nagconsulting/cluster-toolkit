@@ -14,8 +14,15 @@
 
 """Top level Django app definitions"""
 
+import logging
+import sys
+import threading
+from pathlib import Path
+
 from django.apps import AppConfig
 from .cluster_manager import c2
+
+logger = logging.getLogger(__name__)
 
 class GHPCFEConfig(AppConfig):
     name = "ghpcfe"
@@ -27,3 +34,18 @@ class GHPCFEConfig(AppConfig):
 
         c2.startup()
         c2.start_cloud_build_log_subscriber()
+        if Path(sys.argv[0]).name != "manage.py":  # the web server, not migrate, shell, ...
+            threading.Thread(target=_warm_cluster_builder, daemon=True).start()
+
+
+def _warm_cluster_builder():
+    """Run `gcluster explain` for every catalog blueprint and module now, in
+    the background, so the Cluster Builder's first requests don't wait for
+    it. In-process like cloud_info's caches; the repo only changes on
+    redeploy, which restarts the server."""
+    from ofe_agent.toolkit.blueprint import warm  # pylint: disable=import-outside-toplevel
+
+    try:
+        logger.info("Cluster Builder cache warmed: %d blueprints, %d modules", *warm())
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("Cluster Builder cache warm-up failed", exc_info=True)
